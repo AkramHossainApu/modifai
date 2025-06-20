@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'animated_circle.dart';
+import 'login_page.dart';
 
 class WelcomePage extends StatefulWidget {
   const WelcomePage({super.key});
@@ -124,7 +125,12 @@ class _WelcomePageState extends State<WelcomePage>
                         elevation: 6,
                       ),
                       onPressed: () {
-                        Navigator.pushNamed(context, '/login');
+                        Navigator.pushReplacement(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const LoginPage(),
+                          ),
+                        );
                       },
                       child: const Text(
                         'Get Started',

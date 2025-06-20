@@ -39,7 +39,6 @@ class _LoginPageState extends State<LoginPage> {
       final GoogleSignInAccount? account = await googleSignIn.signIn();
       if (!mounted) return;
       if (account != null) {
-        // Optionally, save login state
         final prefs = await SharedPreferences.getInstance();
         await prefs.setBool('isAdmin', true);
 
