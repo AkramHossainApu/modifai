@@ -1,2 +1,2 @@
-# modifai
-Your Ai Home Decore
+# ModifAI
+Your AI Interior Decor
