@@ -51,6 +51,7 @@ class _SettingsPageState extends State<SettingsPage> {
         ],
       ),
     );
+    if (!mounted) return;
     if (result != null && result.isNotEmpty) {
       setState(() {
         _userName = result;
@@ -72,7 +73,7 @@ class _SettingsPageState extends State<SettingsPage> {
             top: -100,
             left: -100,
             child: AnimatedCircle(
-              color: Colors.blueAccent.withOpacity(0.12),
+              color: Colors.blueAccent.withValues(alpha: 0.12),
               size: 250,
               duration: 3000,
             ),
@@ -81,7 +82,7 @@ class _SettingsPageState extends State<SettingsPage> {
             bottom: -80,
             right: -80,
             child: AnimatedCircle(
-              color: Colors.purpleAccent.withOpacity(0.10),
+              color: Colors.purpleAccent.withValues(alpha: 0.10),
               size: 200,
               duration: 4000,
             ),

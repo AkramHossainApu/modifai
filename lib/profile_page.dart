@@ -34,7 +34,7 @@ class ProfilePage extends StatelessWidget {
             top: -100,
             left: -100,
             child: AnimatedCircle(
-              color: Colors.blueAccent.withOpacity(0.12),
+              color: Colors.blueAccent.withValues(alpha: 0.12),
               size: 250,
               duration: 3000,
             ),
@@ -43,7 +43,7 @@ class ProfilePage extends StatelessWidget {
             bottom: -80,
             right: -80,
             child: AnimatedCircle(
-              color: Colors.purpleAccent.withOpacity(0.10),
+              color: Colors.purpleAccent.withValues(alpha: 0.10),
               size: 200,
               duration: 4000,
             ),
@@ -98,7 +98,9 @@ class ProfilePage extends StatelessWidget {
                         backgroundImage: imagePath != null
                             ? AssetImage(imagePath!)
                             : null,
-                        backgroundColor: Colors.blueAccent.withOpacity(0.15),
+                        backgroundColor: Colors.blueAccent.withValues(
+                          alpha: 0.15,
+                        ),
                         child: imagePath == null
                             ? const Icon(
                                 Icons.person,

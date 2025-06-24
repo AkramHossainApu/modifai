@@ -42,6 +42,7 @@ class _LoginPageState extends State<LoginPage> {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setBool('isAdmin', true);
 
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Signed in as ${account.email}')),
         );
@@ -71,6 +72,7 @@ class _LoginPageState extends State<LoginPage> {
         MaterialPageRoute(builder: (context) => const HomePage()),
       );
     } else {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Invalid admin credentials')),
       );

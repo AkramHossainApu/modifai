@@ -4,6 +4,7 @@ import 'profile_page.dart';
 import 'animated_circle.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
+import 'services/api_service.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -15,7 +16,7 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
-  final List<String> _chatHistory = [
+  final List<dynamic> _chatHistory = [
     "Redesign my living room",
     "Make my bedroom cozy",
     "Add plants to my workspace",
@@ -23,6 +24,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   ];
 
   final TextEditingController _chatController = TextEditingController();
+  late FocusNode _chatFocusNode;
   bool _showOptions = false;
   bool _isRecording = false;
   late AnimationController _bgController;
@@ -48,6 +50,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   late String _currentPlaceholder;
   final ScrollController _chatScrollController = ScrollController();
   File? _pickedImage;
+  bool _isLoading = false;
 
   @override
   void initState() {
@@ -64,6 +67,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
     _setRandomPlaceholder();
 
+    _chatFocusNode = FocusNode();
+
     _chatController.addListener(() {
       setState(() {});
     });
@@ -79,6 +84,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     _chatController.dispose();
     _bgController.dispose();
     _optionController.dispose();
+    _chatFocusNode.dispose();
     super.dispose();
   }
 
@@ -103,14 +109,29 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     ).showSnackBar(SnackBar(content: Text('Selected: $option')));
   }
 
-  void _handleSend() {
+  Future<void> _handleSend() async {
     final text = _chatController.text.trim();
     if (text.isNotEmpty) {
       setState(() {
         _chatHistory.add(text);
         _chatController.clear();
         _setRandomPlaceholder();
+        _isLoading = true;
       });
+      try {
+        final reply = await ApiService.getChatbotReply(text);
+        setState(() {
+          _chatHistory.add(reply);
+        });
+      } catch (e) {
+        setState(() {
+          _chatHistory.add("AI error: $e");
+        });
+      } finally {
+        setState(() {
+          _isLoading = false;
+        });
+      }
       Future.delayed(const Duration(milliseconds: 100), () {
         if (_chatScrollController.hasClients) {
           _chatScrollController.animateTo(
@@ -119,6 +140,29 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             curve: Curves.easeOut,
           );
         }
+      });
+    }
+  }
+
+  Future<void> _handleImageSend(File image) async {
+    setState(() {
+      _chatHistory.add("[image:${image.path}]");
+      _isLoading = true;
+    });
+    try {
+      final decorated = await ApiService.getDecoratedImage(
+        image /* add second argument here */,
+      );
+      setState(() {
+        _chatHistory.add("[image:${decorated.path}]");
+      });
+    } catch (e) {
+      setState(() {
+        _chatHistory.add("AI image error: $e");
+      });
+    } finally {
+      setState(() {
+        _isLoading = false;
       });
     }
   }
@@ -176,7 +220,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             top: -100,
             left: -100,
             child: AnimatedCircle(
-              color: Colors.blueAccent.withOpacity(0.12),
+              color: Colors.blueAccent.withValues(alpha: 0.12),
               size: 250,
               duration: 3000,
             ),
@@ -185,7 +229,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             bottom: -80,
             right: -80,
             child: AnimatedCircle(
-              color: Colors.purpleAccent.withOpacity(0.10),
+              color: Colors.purpleAccent.withValues(alpha: 0.10),
               size: 200,
               duration: 4000,
             ),
@@ -256,7 +300,28 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                       itemCount: _chatHistory.length,
                       itemBuilder: (context, index) {
                         final msg = _chatHistory[index];
-                        if (msg.startsWith("[image:")) {
+                        if (msg is File) {
+                          return Align(
+                            alignment: Alignment.centerRight,
+                            child: Container(
+                              margin: const EdgeInsets.symmetric(vertical: 6),
+                              padding: const EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+                                color: Colors.blueAccent.shade100.withAlpha(50),
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(12),
+                                child: Image.file(
+                                  msg,
+                                  width: 180,
+                                  height: 180,
+                                  fit: BoxFit.cover,
+                                ),
+                              ),
+                            ),
+                          );
+                        } else if (msg is String && msg.startsWith("[image:")) {
                           final path = msg.substring(7, msg.length - 1);
                           return Align(
                             alignment: Alignment.centerRight,
@@ -264,9 +329,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                               margin: const EdgeInsets.symmetric(vertical: 6),
                               padding: const EdgeInsets.all(4),
                               decoration: BoxDecoration(
-                                color: Colors.blueAccent.shade100.withOpacity(
-                                  0.2,
-                                ),
+                                color: Colors.blueAccent.shade100.withAlpha(50),
                                 borderRadius: BorderRadius.circular(16),
                               ),
                               child: ClipRRect(
@@ -290,9 +353,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                               vertical: 12,
                             ),
                             decoration: BoxDecoration(
-                              color: Colors.blueAccent.shade100.withOpacity(
-                                0.2,
-                              ),
+                              color: Colors.blueAccent.shade100.withAlpha(50),
                               borderRadius: const BorderRadius.only(
                                 topLeft: Radius.circular(18),
                                 topRight: Radius.circular(18),
@@ -301,7 +362,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                               ),
                             ),
                             child: Text(
-                              _chatHistory[index],
+                              msg is String ? msg : msg.toString(),
                               style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 16,
@@ -365,21 +426,30 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                               "Allow",
                               style: TextStyle(color: Colors.white),
                             ),
-                            onPressed: () {
-                              setState(() {
-                                _chatHistory.add(
-                                  "[image:${_pickedImage!.path}]",
-                                );
-                                _pickedImage = null;
-                              });
+                            onPressed: () async {
+                              if (_pickedImage != null) {
+                                final image = _pickedImage!;
+                                setState(() {
+                                  _pickedImage = null;
+                                });
+                                await _handleImageSend(image);
+                              }
                             },
                           ),
                         ),
                       ],
                     ),
                   ),
+                // Loading indicator
+                if (_isLoading)
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 12),
+                    child: CircularProgressIndicator(),
+                  ),
                 // Suggestion bar a bit above the chat bar
-                if (_chatController.text.isEmpty && _pickedImage == null)
+                if (_chatController.text.isEmpty &&
+                    _pickedImage == null &&
+                    !_isLoading)
                   Padding(
                     padding: const EdgeInsets.only(
                       bottom: 28,
@@ -526,6 +596,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                               Expanded(
                                 child: TextField(
                                   controller: _chatController,
+                                  focusNode: _chatFocusNode,
                                   style: const TextStyle(color: Colors.white),
                                   decoration: InputDecoration(
                                     hintText: _currentPlaceholder,
@@ -546,6 +617,12 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                       _setRandomPlaceholder();
                                     });
                                   },
+                                  onSubmitted: (_) {
+                                    // Keep focus after submitting
+                                    FocusScope.of(
+                                      context,
+                                    ).requestFocus(_chatFocusNode);
+                                  },
                                 ),
                               ),
                               IconButton(
@@ -554,7 +631,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                   color: Colors.blueAccent,
                                   size: 24,
                                 ),
-                                onPressed: _handleSend,
+                                onPressed: _isLoading ? null : _handleSend,
                               ),
                             ],
                           ),
@@ -643,7 +720,7 @@ class _OptionButton extends StatelessWidget {
       color: Colors.grey[900],
       borderRadius: BorderRadius.circular(16),
       elevation: 6,
-      shadowColor: color.withOpacity(0.18),
+      shadowColor: color.withValues(alpha: 0.18),
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
         onTap: onTap,
@@ -653,7 +730,7 @@ class _OptionButton extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               CircleAvatar(
-                backgroundColor: color.withOpacity(0.18),
+                backgroundColor: color.withValues(alpha: 0.18),
                 radius: 16,
                 child: Icon(icon, color: color, size: 20),
               ),
