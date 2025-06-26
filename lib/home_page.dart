@@ -1,10 +1,10 @@
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'profile_page.dart';
 import 'animated_circle.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 import 'services/api_service.dart';
+import 'package:photo_view/photo_view.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -16,12 +16,7 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
-  final List<dynamic> _chatHistory = [
-    "Redesign my living room",
-    "Make my bedroom cozy",
-    "Add plants to my workspace",
-    "Suggest furniture layout",
-  ];
+  final List<Map<String, dynamic>> _chatHistory = [];
 
   final TextEditingController _chatController = TextEditingController();
   late FocusNode _chatFocusNode;
@@ -39,6 +34,10 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     {'title': 'Decorate my dining area', 'subtitle': 'for family gatherings'},
   ];
 
+  final ScrollController _chatScrollController = ScrollController();
+  File? _pickedImage;
+  bool _isLoading = false;
+
   final List<String> _placeholders = [
     "What's on your mind?",
     "Tell me your plan",
@@ -46,11 +45,10 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     "Share your idea...",
     "What would you like to do?",
   ];
-
   late String _currentPlaceholder;
-  final ScrollController _chatScrollController = ScrollController();
-  File? _pickedImage;
-  bool _isLoading = false;
+
+  final List<List<Map<String, dynamic>>> _chatSessions = [];
+  int _currentSessionIndex = 0;
 
   @override
   void initState() {
@@ -65,18 +63,19 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       duration: const Duration(milliseconds: 400),
     );
 
-    _setRandomPlaceholder();
-
     _chatFocusNode = FocusNode();
 
     _chatController.addListener(() {
       setState(() {});
     });
-  }
 
-  void _setRandomPlaceholder() {
-    final random = Random();
-    _currentPlaceholder = _placeholders[random.nextInt(_placeholders.length)];
+    // Request focus when the widget is built
+    Future.delayed(Duration.zero, () {
+      _chatFocusNode.requestFocus();
+    });
+
+    // Set initial placeholder
+    _currentPlaceholder = _placeholders[0];
   }
 
   @override
@@ -112,20 +111,35 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   Future<void> _handleSend() async {
     final text = _chatController.text.trim();
     if (text.isNotEmpty) {
+      // If this is the first message in a new chat, start a new session
+      if (_isNewChat) {
+        _chatSessions.add([]);
+        _currentSessionIndex = _chatSessions.length - 1;
+      }
       setState(() {
-        _chatHistory.add(text);
+        _chatHistory.add({'text': text, 'sender': 'user'});
+        // Also add to the current session in history
+        _chatSessions[_currentSessionIndex].add({'text': text, 'sender': 'user'});
         _chatController.clear();
-        _setRandomPlaceholder();
         _isLoading = true;
       });
       try {
         final reply = await ApiService.getChatbotReply(text);
-        setState(() {
-          _chatHistory.add(reply);
-        });
+        if (reply is File) {
+          setState(() {
+            _chatHistory.add({'text': '[image:${reply.path}]', 'sender': 'ai'});
+            _chatSessions[_currentSessionIndex].add({'text': '[image:${reply.path}]', 'sender': 'ai'});
+          });
+        } else {
+          setState(() {
+            _chatHistory.add({'text': reply, 'sender': 'ai'});
+            _chatSessions[_currentSessionIndex].add({'text': reply, 'sender': 'ai'});
+          });
+        }
       } catch (e) {
         setState(() {
-          _chatHistory.add("AI error: $e");
+          _chatHistory.add({'text': "AI error: $e", 'sender': 'ai'});
+          _chatSessions[_currentSessionIndex].add({'text': "AI error: $e", 'sender': 'ai'});
         });
       } finally {
         setState(() {
@@ -145,20 +159,50 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   }
 
   Future<void> _handleImageSend(File image) async {
+    // Show user's image in chat
     setState(() {
-      _chatHistory.add("[image:${image.path}]");
+      _chatHistory.add({
+        "sender": "user",
+        "text": "[image:${image.path}]",
+      });
       _isLoading = true;
     });
+
+    // Show AI processing indicator
+    setState(() {
+      _chatHistory.add({
+        "sender": "ai",
+        "text": "[processing_image]",
+        "progress": 0,
+      });
+    });
+
     try {
       final decorated = await ApiService.getDecoratedImage(
-        image /* add second argument here */,
+        image,
+        onProgress: (int p) {
+          setState(() {
+            final idx = _chatHistory.lastIndexWhere((msg) => msg['text'] == "[processing_image]");
+            if (idx != -1) _chatHistory[idx]['progress'] = p;
+          });
+        },
       );
       setState(() {
-        _chatHistory.add("[image:${decorated.path}]");
+        // Remove processing indicator
+        final idx = _chatHistory.lastIndexWhere((msg) => msg['text'] == "[processing_image]");
+        if (idx != -1) _chatHistory.removeAt(idx);
+        // Show AI's generated image
+        _chatHistory.add({
+          "sender": "ai",
+          "text": "[image:${decorated.path}]",
+        });
       });
     } catch (e) {
       setState(() {
-        _chatHistory.add("AI image error: $e");
+        _chatHistory.add({
+          "sender": "ai",
+          "text": "AI image error: $e",
+        });
       });
     } finally {
       setState(() {
@@ -166,6 +210,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       });
     }
   }
+
+  bool get _isNewChat => _chatHistory.isEmpty;
 
   @override
   Widget build(BuildContext context) {
@@ -191,18 +237,46 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 ),
               ),
               const Divider(color: Colors.white24),
+              // --- New Chat Option ---
+              ListTile(
+                leading: const Icon(Icons.add, color: Colors.blueAccent),
+                title: const Text(
+                  "New Chat",
+                  style: TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold),
+                ),
+                onTap: () {
+                  setState(() {
+                    _chatHistory.clear();
+                    _pickedImage = null;
+                    _isLoading = false;
+                    _chatController.clear();
+                    _currentPlaceholder = (_placeholders..shuffle()).first;
+                    _currentSessionIndex = _chatSessions.length; // new session index
+                  });
+                  Navigator.pop(context);
+                },
+              ),
+              const Divider(color: Colors.white24),
+              // --- Existing chat history ---
               Expanded(
                 child: ListView.builder(
-                  itemCount: _chatHistory.length,
+                  itemCount: _chatSessions.length,
                   itemBuilder: (context, index) {
+                    final session = _chatSessions[index];
+                    final firstMsg = session.isNotEmpty ? session.first['text'] : "Empty chat";
                     return ListTile(
                       title: Text(
-                        _chatHistory[index],
+                        firstMsg.length > 30 ? "${firstMsg.substring(0, 30)}..." : firstMsg,
                         style: const TextStyle(color: Colors.white),
                       ),
                       leading: const Icon(Icons.history, color: Colors.white54),
                       onTap: () {
-                        _chatController.text = _chatHistory[index];
+                        setState(() {
+                          _chatHistory
+                            ..clear()
+                            ..addAll(session);
+                          _currentSessionIndex = index;
+                        });
                         Navigator.pop(context);
                       },
                     );
@@ -220,7 +294,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             top: -100,
             left: -100,
             child: AnimatedCircle(
-              color: Colors.blueAccent.withValues(alpha: 0.12),
+              color: Colors.blueAccent.withAlpha(30),
               size: 250,
               duration: 3000,
             ),
@@ -229,7 +303,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             bottom: -80,
             right: -80,
             child: AnimatedCircle(
-              color: Colors.purpleAccent.withValues(alpha: 0.10),
+              color: Colors.purpleAccent.withAlpha(25),
               size: 200,
               duration: 4000,
             ),
@@ -300,74 +374,125 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                       itemCount: _chatHistory.length,
                       itemBuilder: (context, index) {
                         final msg = _chatHistory[index];
-                        if (msg is File) {
-                          return Align(
-                            alignment: Alignment.centerRight,
-                            child: Container(
-                              margin: const EdgeInsets.symmetric(vertical: 6),
-                              padding: const EdgeInsets.all(4),
-                              decoration: BoxDecoration(
-                                color: Colors.blueAccent.shade100.withAlpha(50),
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(12),
-                                child: Image.file(
-                                  msg,
-                                  width: 180,
-                                  height: 180,
-                                  fit: BoxFit.cover,
+                        final isUser = msg['sender'] == 'user';
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 6),
+                          child: Row(
+                            mainAxisAlignment:
+                                isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              if (!isUser)
+                                Padding(
+                                  padding: const EdgeInsets.only(right: 8.0),
+                                  child: CircleAvatar(
+                                    radius: 16,
+                                    backgroundColor: Colors.blueGrey[700],
+                                    child: Icon(Icons.smart_toy, color: Colors.white, size: 18), // AI avatar
+                                  ),
+                                ),
+                              Flexible(
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                  decoration: BoxDecoration(
+                                    color: isUser
+                                        ? Colors.blueAccent.shade100.withAlpha(50)
+                                        : Colors.grey[600], // lighter gray for AI
+                                    borderRadius: BorderRadius.only(
+                                      topLeft: const Radius.circular(18),
+                                      topRight: const Radius.circular(18),
+                                      bottomLeft: isUser
+                                          ? const Radius.circular(18)
+                                          : const Radius.circular(4),
+                                      bottomRight: isUser
+                                          ? const Radius.circular(4)
+                                          : const Radius.circular(18),
+                                    ),
+                                  ),
+                                  child: msg['text'] == "[processing_image]"
+                                      ? Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            SizedBox(
+                                              width: 18,
+                                              height: 18,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                                color: Colors.blueAccent,
+                                                value: (msg['progress'] ?? 0) / 100,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 10),
+                                            Text(
+                                              "Processing image... ${(msg['progress'] ?? 0)}%",
+                                              style: const TextStyle(color: Colors.white, fontSize: 15),
+                                            ),
+                                          ],
+                                        )
+                                      : msg['text'].toString().startsWith('[image:')
+                                          ? Builder(
+                                              builder: (context) {
+                                                final imagePath = msg['text']
+                                                    .toString()
+                                                    .replaceAll(RegExp(r'^\[image:|\]$'), '');
+                                                final file = File(imagePath);
+                                                if (!file.existsSync()) {
+                                                  return Text(
+                                                    "Image not ready yet.",
+                                                    style: const TextStyle(color: Colors.white70, fontStyle: FontStyle.italic),
+                                                  );
+                                                }
+                                                return GestureDetector(
+                                                  onTap: () {
+                                                    showDialog(
+                                                      context: context,
+                                                      builder: (_) => Dialog(
+                                                        backgroundColor: Colors.transparent,
+                                                        child: Stack(
+                                                          alignment: Alignment.topRight,
+                                                          children: [
+                                                            PhotoView(
+                                                              imageProvider: FileImage(File(imagePath)),
+                                                              backgroundDecoration: const BoxDecoration(
+                                                                color: Colors.transparent,
+                                                              ),
+                                                            ),
+                                                          ],
+                                                        ),
+                                                      ),
+                                                    );
+                                                  },
+                                                  child: ClipRRect(
+                                                    borderRadius: BorderRadius.circular(12),
+                                                    child: Image.file(
+                                                      File(imagePath),
+                                                      width: 120,
+                                                      height: 120,
+                                                      fit: BoxFit.cover,
+                                                    ),
+                                                  ),
+                                                );
+                                              },
+                                            )
+                                          : Text(
+                                              msg['text'],
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 16,
+                                              ),
+                                            ),
                                 ),
                               ),
-                            ),
-                          );
-                        } else if (msg is String && msg.startsWith("[image:")) {
-                          final path = msg.substring(7, msg.length - 1);
-                          return Align(
-                            alignment: Alignment.centerRight,
-                            child: Container(
-                              margin: const EdgeInsets.symmetric(vertical: 6),
-                              padding: const EdgeInsets.all(4),
-                              decoration: BoxDecoration(
-                                color: Colors.blueAccent.shade100.withAlpha(50),
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(12),
-                                child: Image.file(
-                                  File(path),
-                                  width: 100,
-                                  height: 100,
-                                  fit: BoxFit.cover,
+                              if (isUser)
+                                Padding(
+                                  padding: const EdgeInsets.only(left: 8.0),
+                                  child: CircleAvatar(
+                                    radius: 16,
+                                    backgroundColor: Colors.blueAccent,
+                                    child: Icon(Icons.person, color: Colors.white, size: 18), // User avatar
+                                  ),
                                 ),
-                              ),
-                            ),
-                          );
-                        }
-                        return Align(
-                          alignment: Alignment.centerRight,
-                          child: Container(
-                            margin: const EdgeInsets.symmetric(vertical: 6),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 12,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.blueAccent.shade100.withAlpha(50),
-                              borderRadius: const BorderRadius.only(
-                                topLeft: Radius.circular(18),
-                                topRight: Radius.circular(18),
-                                bottomLeft: Radius.circular(18),
-                                bottomRight: Radius.circular(4),
-                              ),
-                            ),
-                            child: Text(
-                              msg is String ? msg : msg.toString(),
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
-                              ),
-                            ),
+                            ],
                           ),
                         );
                       },
@@ -449,11 +574,12 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 // Suggestion bar a bit above the chat bar
                 if (_chatController.text.isEmpty &&
                     _pickedImage == null &&
-                    !_isLoading)
+                    !_isLoading &&
+                    _chatHistory.isEmpty) // <-- Only show suggestions if chat is empty
                   Padding(
                     padding: const EdgeInsets.only(
                       bottom: 28,
-                    ), // Moderate space above chat bar
+                    ),
                     child: SizedBox(
                       height: 78,
                       child: ListView.separated(
@@ -612,16 +738,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                   ),
                                   minLines: 1,
                                   maxLines: 4,
-                                  onTap: () {
-                                    setState(() {
-                                      _setRandomPlaceholder();
-                                    });
-                                  },
                                   onSubmitted: (_) {
-                                    // Keep focus after submitting
-                                    FocusScope.of(
-                                      context,
-                                    ).requestFocus(_chatFocusNode);
+                                    _handleSend();
+                                    FocusScope.of(context).requestFocus(_chatFocusNode);
                                   },
                                 ),
                               ),
@@ -631,7 +750,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                   color: Colors.blueAccent,
                                   size: 24,
                                 ),
-                                onPressed: _isLoading ? null : _handleSend,
+                                onPressed: _isLoading || _chatController.text.trim().isEmpty ? null : _handleSend,
                               ),
                             ],
                           ),
@@ -720,7 +839,7 @@ class _OptionButton extends StatelessWidget {
       color: Colors.grey[900],
       borderRadius: BorderRadius.circular(16),
       elevation: 6,
-      shadowColor: color.withValues(alpha: 0.18),
+      shadowColor: color.withAlpha((0.18 * 255).toInt()),
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
         onTap: onTap,
@@ -730,7 +849,7 @@ class _OptionButton extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               CircleAvatar(
-                backgroundColor: color.withValues(alpha: 0.18),
+                backgroundColor: color.withAlpha((0.18 * 255).toInt()),
                 radius: 16,
                 child: Icon(icon, color: color, size: 20),
               ),

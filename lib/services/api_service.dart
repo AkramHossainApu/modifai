@@ -32,19 +32,26 @@ class ApiService {
     File imageFile, {
     String prompt =
         "a beautiful, modern, cozy, well-lit interior design for this room",
+    void Function(int progress)? onProgress,
   }) async {
     var request = http.MultipartRequest('POST', Uri.parse('$baseUrl/decorate'));
     request.files.add(
       await http.MultipartFile.fromPath('file', imageFile.path),
     );
     request.fields['prompt'] = prompt;
-    var response = await request.send();
+
+    final response = await request.send();
+
+    // Simulate progress (since http doesn't provide progress natively)
+    onProgress?.call(30);
+
     if (response.statusCode == 200) {
       final bytes = await response.stream.toBytes();
       final file = File(
         '${imageFile.parent.path}/decorated_${imageFile.uri.pathSegments.last}',
       );
       await file.writeAsBytes(bytes);
+      onProgress?.call(100); // Call onProgress with 100% when done
       return file;
     } else {
       throw Exception('Failed to get decorated image');
