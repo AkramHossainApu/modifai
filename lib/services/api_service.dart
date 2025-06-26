@@ -6,7 +6,7 @@ import 'package:path_provider/path_provider.dart';
 class ApiService {
   static const String baseUrl = 'http://10.0.2.2:8000';
 
-  /// Returns either a String (text reply) or a File (image)
+  /// Returns either a String (text reply) or  a File (image)
   static Future<dynamic> getChatbotReply(String message) async {
     final response = await http.post(
       Uri.parse('$baseUrl/chat'),
