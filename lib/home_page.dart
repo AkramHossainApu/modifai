@@ -912,12 +912,12 @@ class SuggestionCard extends StatelessWidget {
   final double width;
 
   const SuggestionCard({
-    Key? key,
+    super.key,
     required this.title,
     required this.subtitle,
     required this.onTap,
     required this.width,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -965,12 +965,12 @@ class OptionButton extends StatelessWidget {
   final VoidCallback onTap;
 
   const OptionButton({
-    Key? key,
+    super.key,
     required this.icon,
     required this.label,
     required this.color,
     required this.onTap,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
