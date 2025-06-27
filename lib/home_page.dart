@@ -111,6 +111,63 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   Future<void> _handleSend() async {
     final text = _chatController.text.trim();
     if (text.isNotEmpty) {
+      // If an image is picked, send both image and prompt to AI for modification
+      if (_pickedImage != null) {
+        final imageToSend = _pickedImage!;
+        setState(() {
+          _chatHistory.add({
+            "sender": "user",
+            "text": text,
+            "image": imageToSend.path,
+          });
+          _pickedImage =
+              null; // Remove the image preview immediately after sending
+          _chatController
+              .clear(); // Clear the text box immediately after sending
+          _isLoading = true;
+        });
+        // Show AI typing indicator (animated dots)
+        setState(() {
+          _chatHistory.add({"sender": "ai", "text": "[typing]"});
+        });
+        try {
+          final decorated = await ApiService.getDecoratedImage(
+            imageToSend,
+            prompt: text,
+            onProgress: (int p) {},
+          );
+          setState(() {
+            // Remove typing indicator
+            final idx = _chatHistory.lastIndexWhere(
+              (msg) => msg['text'] == "[typing]",
+            );
+            if (idx != -1) _chatHistory.removeAt(idx);
+            _chatHistory.add({"sender": "ai", "image": decorated.path});
+          });
+        } catch (e) {
+          setState(() {
+            final idx = _chatHistory.lastIndexWhere(
+              (msg) => msg['text'] == "[typing]",
+            );
+            if (idx != -1) _chatHistory.removeAt(idx);
+            _chatHistory.add({"sender": "ai", "text": "AI image error: $e"});
+          });
+        } finally {
+          setState(() {
+            _isLoading = false;
+          });
+        }
+        Future.delayed(const Duration(milliseconds: 100), () {
+          if (_chatScrollController.hasClients) {
+            _chatScrollController.animateTo(
+              _chatScrollController.position.maxScrollExtent,
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeOut,
+            );
+          }
+        });
+        return;
+      }
       // If this is the first message in a new chat, start a new session
       if (_isNewChat) {
         _chatSessions.add([]);
@@ -118,28 +175,48 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       }
       setState(() {
         _chatHistory.add({'text': text, 'sender': 'user'});
-        // Also add to the current session in history
-        _chatSessions[_currentSessionIndex].add({'text': text, 'sender': 'user'});
-        _chatController.clear();
+        _chatSessions[_currentSessionIndex].add({
+          'text': text,
+          'sender': 'user',
+        });
+        _chatController.clear(); // Clear the text box immediately after sending
         _isLoading = true;
+      });
+      setState(() {
+        _chatHistory.add({"sender": "ai", "text": "[typing]"});
       });
       try {
         final reply = await ApiService.getChatbotReply(text);
-        if (reply is File) {
-          setState(() {
+        setState(() {
+          final idx = _chatHistory.lastIndexWhere(
+            (msg) => msg['text'] == "[typing]",
+          );
+          if (idx != -1) _chatHistory.removeAt(idx);
+          if (reply is File) {
             _chatHistory.add({'text': '[image:${reply.path}]', 'sender': 'ai'});
-            _chatSessions[_currentSessionIndex].add({'text': '[image:${reply.path}]', 'sender': 'ai'});
-          });
-        } else {
-          setState(() {
+            _chatSessions[_currentSessionIndex].add({
+              'text': '[image:${reply.path}]',
+              'sender': 'ai',
+            });
+          } else {
             _chatHistory.add({'text': reply, 'sender': 'ai'});
-            _chatSessions[_currentSessionIndex].add({'text': reply, 'sender': 'ai'});
-          });
-        }
+            _chatSessions[_currentSessionIndex].add({
+              'text': reply,
+              'sender': 'ai',
+            });
+          }
+        });
       } catch (e) {
         setState(() {
+          final idx = _chatHistory.lastIndexWhere(
+            (msg) => msg['text'] == "[typing]",
+          );
+          if (idx != -1) _chatHistory.removeAt(idx);
           _chatHistory.add({'text': "AI error: $e", 'sender': 'ai'});
-          _chatSessions[_currentSessionIndex].add({'text': "AI error: $e", 'sender': 'ai'});
+          _chatSessions[_currentSessionIndex].add({
+            'text': "AI error: $e",
+            'sender': 'ai',
+          });
         });
       } finally {
         setState(() {
@@ -154,59 +231,6 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             curve: Curves.easeOut,
           );
         }
-      });
-    }
-  }
-
-  Future<void> _handleImageSend(File image) async {
-    // Show user's image in chat
-    setState(() {
-      _chatHistory.add({
-        "sender": "user",
-        "text": "[image:${image.path}]",
-      });
-      _isLoading = true;
-    });
-
-    // Show AI processing indicator
-    setState(() {
-      _chatHistory.add({
-        "sender": "ai",
-        "text": "[processing_image]",
-        "progress": 0,
-      });
-    });
-
-    try {
-      final decorated = await ApiService.getDecoratedImage(
-        image,
-        onProgress: (int p) {
-          setState(() {
-            final idx = _chatHistory.lastIndexWhere((msg) => msg['text'] == "[processing_image]");
-            if (idx != -1) _chatHistory[idx]['progress'] = p;
-          });
-        },
-      );
-      setState(() {
-        // Remove processing indicator
-        final idx = _chatHistory.lastIndexWhere((msg) => msg['text'] == "[processing_image]");
-        if (idx != -1) _chatHistory.removeAt(idx);
-        // Show AI's generated image
-        _chatHistory.add({
-          "sender": "ai",
-          "text": "[image:${decorated.path}]",
-        });
-      });
-    } catch (e) {
-      setState(() {
-        _chatHistory.add({
-          "sender": "ai",
-          "text": "AI image error: $e",
-        });
-      });
-    } finally {
-      setState(() {
-        _isLoading = false;
       });
     }
   }
@@ -242,7 +266,10 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 leading: const Icon(Icons.add, color: Colors.blueAccent),
                 title: const Text(
                   "New Chat",
-                  style: TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                    color: Colors.blueAccent,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
                 onTap: () {
                   setState(() {
@@ -251,7 +278,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                     _isLoading = false;
                     _chatController.clear();
                     _currentPlaceholder = (_placeholders..shuffle()).first;
-                    _currentSessionIndex = _chatSessions.length; // new session index
+                    _currentSessionIndex =
+                        _chatSessions.length; // new session index
                   });
                   Navigator.pop(context);
                 },
@@ -263,10 +291,14 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                   itemCount: _chatSessions.length,
                   itemBuilder: (context, index) {
                     final session = _chatSessions[index];
-                    final firstMsg = session.isNotEmpty ? session.first['text'] : "Empty chat";
+                    final firstMsg = session.isNotEmpty
+                        ? session.first['text']
+                        : "Empty chat";
                     return ListTile(
                       title: Text(
-                        firstMsg.length > 30 ? "${firstMsg.substring(0, 30)}..." : firstMsg,
+                        firstMsg.length > 30
+                            ? "${firstMsg.substring(0, 30)}..."
+                            : firstMsg,
                         style: const TextStyle(color: Colors.white),
                       ),
                       leading: const Icon(Icons.history, color: Colors.white54),
@@ -378,8 +410,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                         return Padding(
                           padding: const EdgeInsets.symmetric(vertical: 6),
                           child: Row(
-                            mainAxisAlignment:
-                                isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+                            mainAxisAlignment: isUser
+                                ? MainAxisAlignment.end
+                                : MainAxisAlignment.start,
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
                               if (!isUser)
@@ -388,16 +421,26 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                   child: CircleAvatar(
                                     radius: 16,
                                     backgroundColor: Colors.blueGrey[700],
-                                    child: Icon(Icons.smart_toy, color: Colors.white, size: 18), // AI avatar
+                                    child: Icon(
+                                      Icons.smart_toy,
+                                      color: Colors.white,
+                                      size: 18,
+                                    ), // AI avatar
                                   ),
                                 ),
                               Flexible(
                                 child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 12,
+                                  ),
                                   decoration: BoxDecoration(
                                     color: isUser
-                                        ? Colors.blueAccent.shade100.withAlpha(50)
-                                        : Colors.grey[600], // lighter gray for AI
+                                        ? Colors.blueAccent.shade100.withAlpha(
+                                            50,
+                                          )
+                                        : Colors
+                                              .grey[600], // lighter gray for AI
                                     borderRadius: BorderRadius.only(
                                       topLeft: const Radius.circular(18),
                                       topRight: const Radius.circular(18),
@@ -409,7 +452,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                           : const Radius.circular(18),
                                     ),
                                   ),
-                                  child: msg['text'] == "[processing_image]"
+                                  child: msg['text'] == "[typing]"
+                                      ? AnimatedDots()
+                                      : msg['text'] == "[processing_image]"
                                       ? Row(
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
@@ -419,68 +464,186 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                               child: CircularProgressIndicator(
                                                 strokeWidth: 2,
                                                 color: Colors.blueAccent,
-                                                value: (msg['progress'] ?? 0) / 100,
+                                                value:
+                                                    (msg['progress'] ?? 0) /
+                                                    100,
                                               ),
                                             ),
                                             const SizedBox(width: 10),
                                             Text(
-                                              "Processing image... ${(msg['progress'] ?? 0)}%",
-                                              style: const TextStyle(color: Colors.white, fontSize: 15),
+                                              "Processing image... ${msg['progress'] ?? 0}%",
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 15,
+                                              ),
                                             ),
                                           ],
                                         )
-                                      : msg['text'].toString().startsWith('[image:')
-                                          ? Builder(
-                                              builder: (context) {
-                                                final imagePath = msg['text']
-                                                    .toString()
-                                                    .replaceAll(RegExp(r'^\[image:|\]$'), '');
-                                                final file = File(imagePath);
-                                                if (!file.existsSync()) {
-                                                  return Text(
-                                                    "Image not ready yet.",
-                                                    style: const TextStyle(color: Colors.white70, fontStyle: FontStyle.italic),
-                                                  );
-                                                }
-                                                return GestureDetector(
-                                                  onTap: () {
-                                                    showDialog(
-                                                      context: context,
-                                                      builder: (_) => Dialog(
-                                                        backgroundColor: Colors.transparent,
-                                                        child: Stack(
-                                                          alignment: Alignment.topRight,
-                                                          children: [
-                                                            PhotoView(
-                                                              imageProvider: FileImage(File(imagePath)),
-                                                              backgroundDecoration: const BoxDecoration(
-                                                                color: Colors.transparent,
-                                                              ),
-                                                            ),
-                                                          ],
-                                                        ),
+                                      : msg['image'] != null &&
+                                            (msg['text'] == null ||
+                                                msg['sender'] == 'ai')
+                                      ? GestureDetector(
+                                          onTap: () {
+                                            showDialog(
+                                              context: context,
+                                              builder: (_) => Dialog(
+                                                backgroundColor:
+                                                    Colors.transparent,
+                                                child: Stack(
+                                                  alignment: Alignment.topRight,
+                                                  children: [
+                                                    PhotoView(
+                                                      imageProvider: FileImage(
+                                                        File(msg['image']),
                                                       ),
-                                                    );
-                                                  },
-                                                  child: ClipRRect(
-                                                    borderRadius: BorderRadius.circular(12),
-                                                    child: Image.file(
-                                                      File(imagePath),
-                                                      width: 120,
-                                                      height: 120,
-                                                      fit: BoxFit.cover,
+                                                      backgroundDecoration:
+                                                          const BoxDecoration(
+                                                            color: Colors
+                                                                .transparent,
+                                                          ),
                                                     ),
-                                                  ),
-                                                );
-                                              },
-                                            )
-                                          : Text(
+                                                    Positioned(
+                                                      top: 10,
+                                                      right: 10,
+                                                      child: IconButton(
+                                                        icon: const Icon(
+                                                          Icons.close,
+                                                          color: Colors.white,
+                                                          size: 32,
+                                                        ),
+                                                        onPressed: () =>
+                                                            Navigator.of(
+                                                              context,
+                                                            ).pop(),
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                            );
+                                          },
+                                          child: ClipRRect(
+                                            borderRadius: BorderRadius.circular(
+                                              12,
+                                            ),
+                                            child: Image.file(
+                                              File(msg['image']),
+                                              width: 180,
+                                              height: 180,
+                                              fit: BoxFit.cover,
+                                            ),
+                                          ),
+                                        )
+                                      : msg['image'] != null &&
+                                            msg['text'] != null
+                                      ? Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            ClipRRect(
+                                              borderRadius:
+                                                  BorderRadius.circular(12),
+                                              child: Image.file(
+                                                File(msg['image']),
+                                                width: 120,
+                                                height: 120,
+                                                fit: BoxFit.cover,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 6),
+                                            Text(
                                               msg['text'],
                                               style: const TextStyle(
                                                 color: Colors.white,
                                                 fontSize: 16,
                                               ),
                                             ),
+                                          ],
+                                        )
+                                      : msg['text'].toString().startsWith(
+                                          '[image:',
+                                        )
+                                      ? Builder(
+                                          builder: (context) {
+                                            final imagePath = msg['text']
+                                                .toString()
+                                                .replaceAll(
+                                                  RegExp(r'^\[image:|\]$'),
+                                                  '',
+                                                );
+                                            final file = File(imagePath);
+                                            if (!file.existsSync()) {
+                                              return Text(
+                                                "Image not ready yet.",
+                                                style: const TextStyle(
+                                                  color: Colors.white70,
+                                                  fontStyle: FontStyle.italic,
+                                                ),
+                                              );
+                                            }
+                                            return GestureDetector(
+                                              onTap: () {
+                                                showDialog(
+                                                  context: context,
+                                                  builder: (_) => Dialog(
+                                                    backgroundColor:
+                                                        Colors.transparent,
+                                                    child: Stack(
+                                                      alignment:
+                                                          Alignment.topRight,
+                                                      children: [
+                                                        PhotoView(
+                                                          imageProvider:
+                                                              FileImage(
+                                                                File(imagePath),
+                                                              ),
+                                                          backgroundDecoration:
+                                                              const BoxDecoration(
+                                                                color: Colors
+                                                                    .transparent,
+                                                              ),
+                                                        ),
+                                                        Positioned(
+                                                          top: 10,
+                                                          right: 10,
+                                                          child: IconButton(
+                                                            icon: const Icon(
+                                                              Icons.close,
+                                                              color:
+                                                                  Colors.white,
+                                                              size: 32,
+                                                            ),
+                                                            onPressed: () =>
+                                                                Navigator.of(
+                                                                  context,
+                                                                ).pop(),
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  ),
+                                                );
+                                              },
+                                              child: ClipRRect(
+                                                borderRadius:
+                                                    BorderRadius.circular(12),
+                                                child: Image.file(
+                                                  File(imagePath),
+                                                  width: 120,
+                                                  height: 120,
+                                                  fit: BoxFit.cover,
+                                                ),
+                                              ),
+                                            );
+                                          },
+                                        )
+                                      : Text(
+                                          msg['text'],
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 16,
+                                          ),
+                                        ),
                                 ),
                               ),
                               if (isUser)
@@ -489,7 +652,11 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                   child: CircleAvatar(
                                     radius: 16,
                                     backgroundColor: Colors.blueAccent,
-                                    child: Icon(Icons.person, color: Colors.white, size: 18), // User avatar
+                                    child: Icon(
+                                      Icons.person,
+                                      color: Colors.white,
+                                      size: 18,
+                                    ), // User avatar
                                   ),
                                 ),
                             ],
@@ -533,53 +700,17 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                             },
                           ),
                         ),
-                        Positioned(
-                          bottom: -8,
-                          right: -8,
-                          child: ElevatedButton(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.blueAccent,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 4,
-                              ),
-                            ),
-                            child: const Text(
-                              "Allow",
-                              style: TextStyle(color: Colors.white),
-                            ),
-                            onPressed: () async {
-                              if (_pickedImage != null) {
-                                final image = _pickedImage!;
-                                setState(() {
-                                  _pickedImage = null;
-                                });
-                                await _handleImageSend(image);
-                              }
-                            },
-                          ),
-                        ),
                       ],
                     ),
-                  ),
-                // Loading indicator
-                if (_isLoading)
-                  const Padding(
-                    padding: EdgeInsets.only(bottom: 12),
-                    child: CircularProgressIndicator(),
                   ),
                 // Suggestion bar a bit above the chat bar
                 if (_chatController.text.isEmpty &&
                     _pickedImage == null &&
                     !_isLoading &&
-                    _chatHistory.isEmpty) // <-- Only show suggestions if chat is empty
+                    _chatHistory
+                        .isEmpty) // <-- Only show suggestions if chat is empty
                   Padding(
-                    padding: const EdgeInsets.only(
-                      bottom: 28,
-                    ),
+                    padding: const EdgeInsets.only(bottom: 28),
                     child: SizedBox(
                       height: 78,
                       child: ListView.separated(
@@ -589,7 +720,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                         separatorBuilder: (_, __) => const SizedBox(width: 12),
                         itemBuilder: (context, index) {
                           final suggestion = _suggestions[index];
-                          return _SuggestionCard(
+                          return SuggestionCard(
                             width: cardWidth > 200 ? 200 : cardWidth,
                             title: suggestion['title']!,
                             subtitle: suggestion['subtitle']!,
@@ -621,7 +752,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           if (_showOptions) ...[
-                            _OptionButton(
+                            OptionButton(
                               icon: Icons.photo_library_rounded,
                               label: "Gallery",
                               color: Colors.pinkAccent,
@@ -640,7 +771,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                               },
                             ),
                             const SizedBox(height: 10),
-                            _OptionButton(
+                            OptionButton(
                               icon: Icons.camera_alt_rounded,
                               label: "Camera",
                               color: Colors.orangeAccent,
@@ -660,7 +791,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                               },
                             ),
                             const SizedBox(height: 10),
-                            _OptionButton(
+                            OptionButton(
                               icon: Icons.insert_drive_file_rounded,
                               label: "Files",
                               color: Colors.lightBlueAccent,
@@ -740,7 +871,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                   maxLines: 4,
                                   onSubmitted: (_) {
                                     _handleSend();
-                                    FocusScope.of(context).requestFocus(_chatFocusNode);
+                                    FocusScope.of(
+                                      context,
+                                    ).requestFocus(_chatFocusNode);
                                   },
                                 ),
                               ),
@@ -750,7 +883,11 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                   color: Colors.blueAccent,
                                   size: 24,
                                 ),
-                                onPressed: _isLoading || _chatController.text.trim().isEmpty ? null : _handleSend,
+                                onPressed:
+                                    _isLoading ||
+                                        _chatController.text.trim().isEmpty
+                                    ? null
+                                    : _handleSend,
                               ),
                             ],
                           ),
@@ -768,18 +905,19 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   }
 }
 
-class _SuggestionCard extends StatelessWidget {
+class SuggestionCard extends StatelessWidget {
   final String title;
   final String subtitle;
   final VoidCallback onTap;
   final double width;
 
-  const _SuggestionCard({
+  const SuggestionCard({
+    Key? key,
     required this.title,
     required this.subtitle,
     required this.onTap,
     required this.width,
-  });
+  }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
@@ -820,18 +958,19 @@ class _SuggestionCard extends StatelessWidget {
   }
 }
 
-class _OptionButton extends StatelessWidget {
+class OptionButton extends StatelessWidget {
   final IconData icon;
   final String label;
   final Color color;
   final VoidCallback onTap;
 
-  const _OptionButton({
+  const OptionButton({
+    Key? key,
     required this.icon,
     required this.label,
     required this.color,
     required this.onTap,
-  });
+  }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
@@ -867,6 +1006,56 @@ class _OptionButton extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class AnimatedDots extends StatefulWidget {
+  const AnimatedDots({super.key});
+
+  @override
+  AnimatedDotsState createState() => AnimatedDotsState();
+}
+
+class AnimatedDotsState extends State<AnimatedDots>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<int> _dotCount;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 900),
+      vsync: this,
+    )..repeat();
+    _dotCount = StepTween(
+      begin: 1,
+      end: 3,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.linear));
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _dotCount,
+      builder: (context, child) {
+        String dots = '.' * _dotCount.value;
+        return Text(
+          'AI is typing$dots',
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 16,
+            fontStyle: FontStyle.italic,
+          ),
+        );
+      },
     );
   }
 }

@@ -71,12 +71,30 @@ async def chat(message: str = Form(...)):
         return JSONResponse(status_code=500, content={"detail": f"Chat/image error: {e}"})
 
 @app.post("/decorate")
-async def decorate(prompt: str = Form(...)):
+async def decorate(
+    prompt: str = Form(...),
+    file: UploadFile = File(None)
+):
     try:
         if not prompt or not prompt.strip():
             raise HTTPException(status_code=400, detail="Prompt must not be empty.")
-        # Always use Stable Diffusion for /decorate
-        result = pipe(prompt.strip(), num_inference_steps=30).images[0]
+        if file is not None:
+            # Image-to-image: modify the uploaded image according to the prompt
+            from PIL import Image
+            init_image = Image.open(file.file).convert("RGB")
+            # Resize to 512x512 for Stable Diffusion (or match model requirements)
+            init_image = init_image.resize((512, 512))
+            # Use Stable Diffusion img2img pipeline
+            from diffusers import StableDiffusionImg2ImgPipeline
+            img2img_pipe = StableDiffusionImg2ImgPipeline.from_pretrained(
+                "stabilityai/stable-diffusion-2-1-base",
+                torch_dtype=torch.float32
+            )
+            img2img_pipe.to("cpu")
+            result = img2img_pipe(prompt=prompt.strip(), image=init_image, strength=0.75, num_inference_steps=30).images[0]
+        else:
+            # Text-to-image: generate from prompt only
+            result = pipe(prompt.strip(), num_inference_steps=30).images[0]
         output_buffer = BytesIO()
         result.save(output_buffer, format="PNG")
         output_buffer.seek(0)
