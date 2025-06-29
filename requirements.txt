@@ -1,0 +1,11 @@
+# List your Python dependencies here
+fastapi
+uvicorn
+diffusers
+torch
+transformers
+Pillow
+numpy
+google-generativeai
+huggingface_hub
+tiktoken
