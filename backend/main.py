@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Form, UploadFile, File
+from fastapi import FastAPI, HTTPException, Form, UploadFile, File, Body
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import google.generativeai as genai
@@ -8,6 +8,8 @@ import requests
 from diffusers import StableDiffusionPipeline
 import torch
 import re
+from typing import List
+from pydantic import BaseModel
 
 app = FastAPI()
 app.add_middleware(
@@ -32,6 +34,23 @@ pipe = StableDiffusionPipeline.from_pretrained(
     torch_dtype=torch.float32
 )
 pipe.to("cpu")
+
+# Load Stable Diffusion img2img pipeline at startup (image-to-image)
+from diffusers import StableDiffusionImg2ImgPipeline
+img2img_pipe = StableDiffusionImg2ImgPipeline.from_pretrained(
+    "stabilityai/stable-diffusion-2-1-base",
+    torch_dtype=torch.float32
+)
+img2img_pipe.to("cpu")
+
+# In-memory chat storage (for demo; use a database in production)
+chat_store = {}
+
+class ChatMessage(BaseModel):
+    sender: str
+    receiver: str
+    text: str
+    timestamp: float
 
 def is_image_request(message: str) -> bool:
     # Simple heuristic: look for 'show', 'generate', 'picture', 'image', 'draw', 'visualize', etc.
@@ -84,13 +103,7 @@ async def decorate(
             init_image = Image.open(file.file).convert("RGB")
             # Resize to 512x512 for Stable Diffusion (or match model requirements)
             init_image = init_image.resize((512, 512))
-            # Use Stable Diffusion img2img pipeline
-            from diffusers import StableDiffusionImg2ImgPipeline
-            img2img_pipe = StableDiffusionImg2ImgPipeline.from_pretrained(
-                "stabilityai/stable-diffusion-2-1-base",
-                torch_dtype=torch.float32
-            )
-            img2img_pipe.to("cpu")
+            # Use preloaded img2img pipeline
             result = img2img_pipe(prompt=prompt.strip(), image=init_image, strength=0.75, num_inference_steps=30).images[0]
         else:
             # Text-to-image: generate from prompt only
@@ -103,3 +116,15 @@ async def decorate(
         raise
     except Exception as e:
         return JSONResponse(status_code=500, content={"detail": f"Diffusion image generation error: {e}"})
+
+@app.post("/chat/send")
+def send_message(msg: ChatMessage):
+    key = tuple(sorted([msg.sender, msg.receiver]))
+    chat_store.setdefault(key, []).append(msg.dict())
+    return {"status": "ok"}
+
+@app.get("/chat/history")
+def get_history(user1: str, user2: str) -> List[ChatMessage]:
+    key = tuple(sorted([user1, user2]))
+    messages = chat_store.get(key, [])
+    return messages

@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 import 'services/api_service.dart';
 import 'package:photo_view/photo_view.dart';
+import 'massage/m_home_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -389,6 +390,26 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                           backgroundColor: Colors.white24,
                           child: Icon(
                             Icons.person,
+                            color: Colors.white,
+                            size: 22,
+                          ),
+                        ),
+                      ),
+                      // Add button for massage home page
+                      const SizedBox(width: 8),
+                      GestureDetector(
+                        onTap: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (context) => const AddUserPage(),
+                            ),
+                          );
+                        },
+                        child: const CircleAvatar(
+                          radius: 18,
+                          backgroundColor: Colors.blueAccent,
+                          child: Icon(
+                            Icons.message,
                             color: Colors.white,
                             size: 22,
                           ),
