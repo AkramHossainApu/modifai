@@ -1,19 +1,41 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'animated_circle.dart';
 import 'settings_page.dart';
 
-class ProfilePage extends StatelessWidget {
+class ProfilePage extends StatefulWidget {
   final String userName;
   final String email;
-  final String? imagePath;
 
   const ProfilePage({
     super.key,
     required this.userName,
     required this.email,
-    this.imagePath,
   });
+
+  @override
+  State<ProfilePage> createState() => _ProfilePageState();
+}
+
+class _ProfilePageState extends State<ProfilePage> {
+  String? _profileImagePath;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProfileImage();
+  }
+
+  Future<void> _loadProfileImage() async {
+    final prefs = await SharedPreferences.getInstance();
+    final path = prefs.getString('profile_image_path');
+    if (mounted) {
+      setState(() {
+        _profileImagePath = path;
+      });
+    }
+  }
 
   Future<void> _logout(BuildContext context) async {
     final prefs = await SharedPreferences.getInstance();
@@ -95,13 +117,11 @@ class ProfilePage extends StatelessWidget {
                     children: [
                       CircleAvatar(
                         radius: 40,
-                        backgroundImage: imagePath != null
-                            ? AssetImage(imagePath!)
+                        backgroundImage: _profileImagePath != null
+                            ? FileImage(File(_profileImagePath!))
                             : null,
-                        backgroundColor: Colors.blueAccent.withValues(
-                          alpha: 0.15,
-                        ),
-                        child: imagePath == null
+                        backgroundColor: Colors.blueAccent.withAlpha(40),
+                        child: _profileImagePath == null
                             ? const Icon(
                                 Icons.person,
                                 color: Colors.white,
@@ -111,7 +131,7 @@ class ProfilePage extends StatelessWidget {
                       ),
                       const SizedBox(height: 18),
                       Text(
-                        userName,
+                        widget.userName,
                         style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.w600,
@@ -120,7 +140,7 @@ class ProfilePage extends StatelessWidget {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        email,
+                        widget.email,
                         style: TextStyle(
                           color: Colors.grey.shade400,
                           fontSize: 16,
@@ -139,15 +159,18 @@ class ProfilePage extends StatelessWidget {
                             fontWeight: FontWeight.w500,
                           ),
                         ),
-                        onTap: () {
-                          Navigator.of(context).push(
+                        onTap: () async {
+                          final result = await Navigator.of(context).push(
                             MaterialPageRoute(
                               builder: (context) => SettingsPage(
-                                userName: userName,
-                                email: email,
+                                userName: widget.userName,
+                                email: widget.email,
                               ),
                             ),
                           );
+                          if (result == true) {
+                            _loadProfileImage();
+                          }
                         },
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(16),

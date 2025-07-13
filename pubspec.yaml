@@ -26,5 +26,6 @@ flutter:
   uses-material-design: true
   assets:
     - assets/google_logo.png
+    - assets/modifai_logo.png
 
 

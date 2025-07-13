@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'animated_circle.dart';
+import 'package:image_picker/image_picker.dart';
+import 'dart:io';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class SettingsPage extends StatefulWidget {
   final String userName;
@@ -13,11 +16,28 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   late String _userName;
+  File? _profileImage;
 
   @override
   void initState() {
     super.initState();
     _userName = widget.userName;
+    _loadProfileImage();
+  }
+
+  Future<void> _loadProfileImage() async {
+    final prefs = await SharedPreferences.getInstance();
+    final path = prefs.getString('profile_image_path');
+    if (path != null && mounted) {
+      setState(() {
+        _profileImage = File(path);
+      });
+    }
+  }
+
+  Future<void> _saveProfileImage(String path) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('profile_image_path', path);
   }
 
   void _editName() async {
@@ -56,10 +76,32 @@ class _SettingsPageState extends State<SettingsPage> {
       setState(() {
         _userName = result;
       });
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Name updated!')));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Name updated!')));
     }
+  }
+
+  Future<void> _pickProfileImage() async {
+    final picker = ImagePicker();
+    final pickedFile = await picker.pickImage(source: ImageSource.gallery);
+    if (pickedFile != null) {
+      setState(() {
+        _profileImage = File(pickedFile.path);
+      });
+      await _saveProfileImage(pickedFile.path);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Profile picture updated!')),
+      );
+      // Pop with true so parent can refresh immediately
+      Navigator.pop(context, true);
+    }
+  }
+
+  @override
+  void dispose() {
+    // No need to pop here, handled in _pickProfileImage
+    super.dispose();
   }
 
   @override
@@ -132,6 +174,22 @@ class _SettingsPageState extends State<SettingsPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      Center(
+                        child: GestureDetector(
+                          onTap: _pickProfileImage,
+                          child: CircleAvatar(
+                            radius: 40,
+                            backgroundColor: Colors.blueAccent.withAlpha(40),
+                            backgroundImage: _profileImage != null
+                                ? FileImage(_profileImage!)
+                                : null,
+                            child: _profileImage == null
+                                ? const Icon(Icons.person, size: 40, color: Colors.white70)
+                                : null,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 18),
                       Row(
                         children: [
                           const Icon(

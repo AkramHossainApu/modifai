@@ -72,8 +72,8 @@ class _WelcomePageState extends State<WelcomePage>
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Container(
-                      width: 120,
-                      height: 120,
+                      width: 140,
+                      height: 140,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         color: const Color(0xFF23242B),
@@ -85,10 +85,11 @@ class _WelcomePageState extends State<WelcomePage>
                           ),
                         ],
                       ),
-                      child: Icon(
-                        Icons.home_rounded,
-                        color: Colors.blueAccent.shade200,
-                        size: 70,
+                      child: ClipOval(
+                        child: Image.asset(
+                          'assets/modifai_logo.png',
+                          fit: BoxFit.cover,
+                        ),
                       ),
                     ),
                     const SizedBox(height: 32),

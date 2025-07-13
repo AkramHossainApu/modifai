@@ -116,8 +116,8 @@ class _LoginPageState extends State<LoginPage> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Container(
-                    width: 100,
-                    height: 100,
+                    width: 120,
+                    height: 120,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       color: const Color(0xFF23242B),
@@ -129,10 +129,11 @@ class _LoginPageState extends State<LoginPage> {
                         ),
                       ],
                     ),
-                    child: Icon(
-                      Icons.lock_rounded,
-                      color: Colors.blueAccent.shade200,
-                      size: 60,
+                    child: ClipOval(
+                      child: Image.asset(
+                        'assets/modifai_logo.png',
+                        fit: BoxFit.cover,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 28),
