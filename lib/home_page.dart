@@ -7,7 +7,11 @@ import 'services/api_service.dart';
 import 'package:photo_view/photo_view.dart';
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 import 'massage/m_home_page.dart';
+=======
+import 'package:shared_preferences/shared_preferences.dart';
+>>>>>>> Stashed changes
 =======
 import 'package:shared_preferences/shared_preferences.dart';
 >>>>>>> Stashed changes
@@ -409,6 +413,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                             _loadProfileImage();
                           }
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
                         },
                         child: _profileImagePath != null
                             ? CircleAvatar(
@@ -447,6 +452,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                         ),
 =======
                         },
+=======
+                        },
+>>>>>>> Stashed changes
                         child: _profileImagePath != null
                             ? CircleAvatar(
                                 radius: 18,
@@ -462,6 +470,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                   size: 22,
                                 ),
                               ),
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
                       ),
                     ],
