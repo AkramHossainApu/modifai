@@ -4,6 +4,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'home_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'sign_up_page.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -71,10 +72,35 @@ class _LoginPageState extends State<LoginPage> {
         context,
         MaterialPageRoute(builder: (context) => const HomePage()),
       );
-    } else {
+      return;
+    }
+
+    // Check Firestore for user credentials
+    try {
+      final query = await FirebaseFirestore.instance
+          .collection('users')
+          .where('email', isEqualTo: email)
+          .where('password', isEqualTo: password)
+          .get();
+      if (query.docs.isNotEmpty) {
+        // User found, login successful
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool('isAdmin', false);
+        if (!mounted) return;
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const HomePage()),
+        );
+      } else {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Invalid email or password')),
+        );
+      }
+    } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Invalid admin credentials')),
+        SnackBar(content: Text('Login error: \\${e.toString()}')),
       );
     }
   }

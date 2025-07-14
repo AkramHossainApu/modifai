@@ -33,6 +33,25 @@
   <link rel="manifest" href="manifest.json">
 </head>
 <body>
+  <!-- Firebase App (the core Firebase SDK) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js"></script>
+  <!-- Add other Firebase SDKs as needed, e.g. auth, firestore, etc. -->
+  <!-- <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js"></script> -->
+  <!-- <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js"></script> -->
+  <script>
+    // Your web app's Firebase configuration
+    const firebaseConfig = {
+      apiKey: "AIzaSyAqoM5q3zEkFRiaUXIVIutzq3Xg7VQS14I",
+      authDomain: "modifai0127.firebaseapp.com",
+      projectId: "modifai0127",
+      storageBucket: "modifai0127.firebasestorage.app",
+      messagingSenderId: "543410368633",
+      appId: "1:543410368633:web:434b99a9f315df975b64a8"
+    };
+    // Initialize Firebase
+    const app = firebase.initializeApp(firebaseConfig);
+  </script>
+
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

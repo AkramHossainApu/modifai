@@ -5,6 +5,8 @@ import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 import 'services/api_service.dart';
 import 'package:photo_view/photo_view.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'massage/m_home_page.dart'; // <-- Import AddUserPage
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -400,11 +402,36 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                             _loadProfileImage();
                           }
                         },
+                        child: _profileImagePath != null
+                            ? CircleAvatar(
+                                radius: 18,
+                                backgroundImage: FileImage(File(_profileImagePath!)),
+                                backgroundColor: Colors.white24,
+                              )
+                            : const CircleAvatar(
+                                radius: 18,
+                                backgroundColor: Colors.white24,
+                                child: Icon(
+                                  Icons.person,
+                                  color: Colors.white,
+                                  size: 22,
+                                ),
+                              ),
+                      ),
+                      const SizedBox(width: 8),
+                      GestureDetector(
+                        onTap: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (context) => const AddUserPage(),
+                            ),
+                          );
+                        },
                         child: const CircleAvatar(
                           radius: 18,
-                          backgroundColor: Colors.white24,
+                          backgroundColor: Colors.blueAccent,
                           child: Icon(
-                            Icons.person,
+                            Icons.message,
                             color: Colors.white,
                             size: 22,
                           ),

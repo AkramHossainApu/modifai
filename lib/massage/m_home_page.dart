@@ -185,6 +185,7 @@ class _UserChatPageState extends State<UserChatPage> {
       });
     } catch (e) {
       setState(() => _loading = false);
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to load chat history: $e')),
       );
@@ -205,6 +206,7 @@ class _UserChatPageState extends State<UserChatPage> {
       _msgController.clear();
       await _fetchHistory();
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to send message: $e')),
       );
@@ -257,7 +259,7 @@ class _UserChatPageState extends State<UserChatPage> {
                             ),
                             boxShadow: [
                               BoxShadow(
-                                color: Colors.black.withOpacity(0.08),
+                                color: Colors.black.withValues(alpha: 0.08),
                                 blurRadius: 4,
                                 offset: const Offset(0, 2),
                               ),
