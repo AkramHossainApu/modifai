@@ -4,6 +4,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'home_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'sign_up_page.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class LoginPage extends StatefulWidget {
@@ -75,33 +76,69 @@ class _LoginPageState extends State<LoginPage> {
       return;
     }
 
-    // Check Firestore for user credentials
     try {
-      final query = await FirebaseFirestore.instance
-          .collection('users')
-          .where('email', isEqualTo: email)
-          .where('password', isEqualTo: password)
-          .get();
-      if (query.docs.isNotEmpty) {
-        // User found, login successful
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setBool('isAdmin', false);
-        if (!mounted) return;
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const HomePage()),
-        );
-      } else {
+      final userCredential = await FirebaseAuth.instance
+          .signInWithEmailAndPassword(email: email, password: password);
+      final user = userCredential.user;
+      if (user == null) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Invalid email or password')),
+          const SnackBar(content: Text('Login failed: No user found in Auth')),
+        );
+        return;
+      }
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+      if (!userDoc.exists) {
+        // Auto-create Firestore profile if missing
+        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+          'name': user.displayName ?? '',
+          'email': user.email ?? '',
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Profile created in Firestore.')),
         );
       }
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('isAdmin', false);
+      final userProfile =
+          (await FirebaseFirestore.instance
+                  .collection('users')
+                  .doc(user.uid)
+                  .get())
+              .data();
+      await prefs.setString('userName', userProfile?['name'] ?? '');
+      await prefs.setString('userEmail', user.email ?? '');
+      if (!mounted) return;
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const HomePage()),
+      );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Login error: \\${e.toString()}')),
-      );
+      String errorMsg = 'Login error: ${e.toString()}';
+      if (e is FirebaseAuthException) {
+        switch (e.code) {
+          case 'user-not-found':
+            errorMsg = 'No user found for that email.';
+            break;
+          case 'wrong-password':
+            errorMsg = 'Wrong password provided.';
+            break;
+          case 'invalid-email':
+            errorMsg = 'Invalid email address.';
+            break;
+          default:
+            errorMsg = 'Login error: ${e.message}';
+        }
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(errorMsg)));
     }
   }
 

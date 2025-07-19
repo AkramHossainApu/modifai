@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'animated_circle.dart';
 import 'login_page.dart';
 
@@ -42,17 +43,20 @@ class _SignUpPageState extends State<SignUpPage> {
     }
     setState(() => _isLoading = true);
 
-    // Simulate sign up delay
-    await Future.delayed(const Duration(seconds: 2));
-
-    // Save user data to Firestore (including password)
     try {
-      await FirebaseFirestore.instance.collection('users').add({
+      // Create user with Firebase Auth
+      UserCredential userCredential = await FirebaseAuth.instance
+          .createUserWithEmailAndPassword(email: email, password: password);
+      final uid = userCredential.user?.uid;
+      if (uid == null) throw Exception('User ID not found');
+
+      // Save user profile to Firestore
+      await FirebaseFirestore.instance.collection('users').doc(uid).set({
         'name': name,
         'email': email,
-        'password': password,
         'createdAt': FieldValue.serverTimestamp(),
       });
+
       setState(() => _isLoading = false);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -64,9 +68,9 @@ class _SignUpPageState extends State<SignUpPage> {
       );
     } catch (e) {
       setState(() => _isLoading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error saving user: \\${e.toString()}')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
     }
   }
 
