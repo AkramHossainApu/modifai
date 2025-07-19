@@ -11,10 +11,12 @@ class AddUserPage extends StatefulWidget {
 }
 
 class _AddUserPageState extends State<AddUserPage> {
-  final TextEditingController _usernameController = TextEditingController();
   String? _error;
   final List<String> _users = [];
-  String? _currentUser;
+  String? _currentUserEmail;
+  List<Map<String, dynamic>> _firestoreUsers = [];
+  String? _selectedDropdownUserName;
+  Map<String, dynamic>? _selectedDropdownUser;
 
   @override
   void initState() {
@@ -22,39 +24,37 @@ class _AddUserPageState extends State<AddUserPage> {
     _loadCurrentUser();
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _fetchFirestoreUsers();
+  }
+
   Future<void> _loadCurrentUser() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
-      _currentUser = prefs.getString('userName') ?? 'Me';
+      _currentUserEmail = prefs.getString('userEmail') ?? '';
     });
   }
 
-  void _addUser() {
-    final username = _usernameController.text.trim();
-    if (username.isEmpty) {
-      setState(() => _error = 'Please enter a username.');
-      return;
-    }
-    if (_users.contains(username) || username == _currentUser) {
-      setState(() => _error = 'User already added or is you.');
-      return;
-    }
+  Future<void> _fetchFirestoreUsers() async {
+    // Fetch all users from Firestore 'users' collection
+    final snapshot = await ChatService.getAllUsers();
     setState(() {
-      _users.add(username);
-      _usernameController.clear();
-      _error = null;
+      // Only exclude current user by email
+      _firestoreUsers = snapshot
+          .where((u) => u['email'] != _currentUserEmail && u['name'].isNotEmpty)
+          .toList();
     });
   }
 
   void _openChat(String username) {
-    if (_currentUser == null) return;
+    if (_currentUserEmail == null) return;
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => UserChatPage(
-          userName: username,
-          currentUser: _currentUser!,
-        ),
+        builder: (context) =>
+            UserChatPage(userName: username, currentUser: _currentUserEmail!),
       ),
     );
   }
@@ -65,7 +65,10 @@ class _AddUserPageState extends State<AddUserPage> {
       backgroundColor: const Color(0xFF181A20),
       appBar: AppBar(
         backgroundColor: const Color(0xFF23242B),
-        title: const Text('Start a Chat', style: TextStyle(color: Colors.white)),
+        title: const Text(
+          'Start a Chat',
+          style: TextStyle(color: Colors.white),
+        ),
         iconTheme: const IconThemeData(color: Colors.white),
         elevation: 0,
       ),
@@ -76,62 +79,157 @@ class _AddUserPageState extends State<AddUserPage> {
           children: [
             Card(
               color: Colors.grey[900],
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                child: Row(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
+                child: Column(
                   children: [
-                    const Icon(Icons.person_add, color: Colors.blueAccent),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: TextField(
-                        controller: _usernameController,
-                        style: const TextStyle(color: Colors.white),
-                        decoration: InputDecoration(
-                          labelText: 'Enter username',
-                          labelStyle: const TextStyle(color: Colors.white70),
-                          errorText: _error,
-                          border: InputBorder.none,
+                    Row(
+                      children: [
+                        const Icon(Icons.person_add, color: Colors.blueAccent),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: DropdownButtonFormField<String>(
+                            value: _selectedDropdownUserName,
+                            items: _firestoreUsers.map((user) {
+                              return DropdownMenuItem<String>(
+                                value: user['name'],
+                                child: Text(
+                                  user['name'],
+                                  style: const TextStyle(color: Colors.white),
+                                ),
+                              );
+                            }).toList(),
+                            onChanged: (value) {
+                              setState(() {
+                                _selectedDropdownUserName = value;
+                                _selectedDropdownUser = _firestoreUsers
+                                    .firstWhere((u) => u['name'] == value);
+                              });
+                            },
+                            decoration: InputDecoration(
+                              labelText: 'Select user to chat',
+                              labelStyle: const TextStyle(
+                                color: Colors.white70,
+                              ),
+                              border: InputBorder.none,
+                              filled: true,
+                              fillColor: Colors.grey[850],
+                            ),
+                            dropdownColor: Colors.grey[850],
+                          ),
+                        ),
+                        ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.blueAccent,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          onPressed: () {
+                            if (_selectedDropdownUser == null) {
+                              setState(() => _error = 'Please select a user.');
+                              return;
+                            }
+                            if (_users.contains(_selectedDropdownUserName) ||
+                                _selectedDropdownUserName ==
+                                    _currentUserEmail) {
+                              setState(
+                                () => _error = 'User already added or is you.',
+                              );
+                              return;
+                            }
+                            setState(() {
+                              _users.add(_selectedDropdownUserName!);
+                              _selectedDropdownUserName = null;
+                              _selectedDropdownUser = null;
+                              _error = null;
+                            });
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  'User "$_selectedDropdownUserName" added!',
+                                ),
+                              ),
+                            );
+                          },
+                          child: const Text('Add'),
+                        ),
+                      ],
+                    ),
+                    if (_error != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8.0),
+                        child: Text(
+                          _error!,
+                          style: const TextStyle(color: Colors.redAccent),
                         ),
                       ),
-                    ),
-                    ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blueAccent,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      ),
-                      onPressed: _addUser,
-                      child: const Text('Add'),
-                    ),
                   ],
                 ),
               ),
             ),
             const SizedBox(height: 24),
-            const Text('Chats', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+            const Text(
+              'Chats',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
             const SizedBox(height: 12),
             Expanded(
               child: _users.isEmpty
                   ? const Center(
-                      child: Text('No users added yet.', style: TextStyle(color: Colors.white54)),
+                      child: Text(
+                        'No chats yet.',
+                        style: TextStyle(color: Colors.white54),
+                      ),
                     )
                   : ListView.separated(
                       itemCount: _users.length,
                       separatorBuilder: (_, __) => const SizedBox(height: 10),
                       itemBuilder: (context, index) {
-                        final user = _users[index];
+                        final chatUserName = _users[index];
+                        final chatUser = _firestoreUsers.firstWhere(
+                          (u) => u['name'] == chatUserName,
+                          orElse: () => <String, dynamic>{},
+                        );
                         return Card(
                           color: Colors.grey[850],
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
                           child: ListTile(
                             leading: CircleAvatar(
                               backgroundColor: Colors.blueAccent,
-                              child: Text(user.isNotEmpty ? user[0].toUpperCase() : '?', style: const TextStyle(color: Colors.white)),
+                              child: Text(
+                                chatUserName.isNotEmpty
+                                    ? chatUserName[0].toUpperCase()
+                                    : '?',
+                                style: const TextStyle(color: Colors.white),
+                              ),
                             ),
-                            title: Text(user, style: const TextStyle(color: Colors.white)),
+                            title: Text(
+                              chatUserName,
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                            subtitle: Text(
+                              chatUser['email'] ?? '',
+                              style: const TextStyle(color: Colors.white54),
+                            ),
                             trailing: IconButton(
-                              icon: const Icon(Icons.chat_bubble_outline, color: Colors.blueAccent),
-                              onPressed: () => _openChat(user),
+                              icon: const Icon(
+                                Icons.chat_bubble_outline,
+                                color: Colors.blueAccent,
+                              ),
+                              onPressed: () => _openChat(chatUserName),
                             ),
                           ),
                         );
@@ -148,7 +246,11 @@ class _AddUserPageState extends State<AddUserPage> {
 class UserChatPage extends StatefulWidget {
   final String userName;
   final String currentUser;
-  const UserChatPage({super.key, required this.userName, required this.currentUser});
+  const UserChatPage({
+    super.key,
+    required this.userName,
+    required this.currentUser,
+  });
 
   @override
   State<UserChatPage> createState() => _UserChatPageState();
@@ -157,42 +259,8 @@ class UserChatPage extends StatefulWidget {
 class _UserChatPageState extends State<UserChatPage> {
   final TextEditingController _msgController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-  List<Map<String, dynamic>> _messages = [];
-  bool _loading = true;
 
-  @override
-  void initState() {
-    super.initState();
-    _fetchHistory();
-  }
-
-  Future<void> _fetchHistory() async {
-    setState(() => _loading = true);
-    try {
-      final history = await ChatService.getChatHistory(
-        user1: widget.currentUser,
-        user2: widget.userName,
-      );
-      setState(() {
-        _messages = history;
-        _loading = false;
-      });
-      // Scroll to bottom
-      Future.delayed(const Duration(milliseconds: 100), () {
-        if (_scrollController.hasClients) {
-          _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-        }
-      });
-    } catch (e) {
-      setState(() => _loading = false);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to load chat history: $e')),
-      );
-    }
-  }
-
-  Future<void> _sendMessage() async {
+  void _sendMessage() async {
     final text = _msgController.text.trim();
     if (text.isEmpty) return;
     final now = DateTime.now().millisecondsSinceEpoch / 1000.0;
@@ -204,12 +272,11 @@ class _UserChatPageState extends State<UserChatPage> {
         timestamp: now,
       );
       _msgController.clear();
-      await _fetchHistory();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to send message: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to send message: $e')));
     }
   }
 
@@ -223,7 +290,12 @@ class _UserChatPageState extends State<UserChatPage> {
           children: [
             CircleAvatar(
               backgroundColor: Colors.blueAccent,
-              child: Text(widget.userName.isNotEmpty ? widget.userName[0].toUpperCase() : '?', style: const TextStyle(color: Colors.white)),
+              child: Text(
+                widget.userName.isNotEmpty
+                    ? widget.userName[0].toUpperCase()
+                    : '?',
+                style: const TextStyle(color: Colors.white),
+              ),
             ),
             const SizedBox(width: 12),
             Text(widget.userName, style: const TextStyle(color: Colors.white)),
@@ -235,44 +307,76 @@ class _UserChatPageState extends State<UserChatPage> {
       body: Column(
         children: [
           Expanded(
-            child: _loading
-                ? const Center(child: CircularProgressIndicator())
-                : ListView.builder(
-                    controller: _scrollController,
-                    padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
-                    itemCount: _messages.length,
-                    itemBuilder: (context, index) {
-                      final msg = _messages[index];
-                      final isMe = msg['sender'] == widget.currentUser;
-                      return Align(
-                        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-                        child: Container(
-                          margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-                          padding: const EdgeInsets.all(14),
-                          decoration: BoxDecoration(
-                            color: isMe ? Colors.blueAccent : Colors.grey[800],
-                            borderRadius: BorderRadius.only(
-                              topLeft: const Radius.circular(16),
-                              topRight: const Radius.circular(16),
-                              bottomLeft: isMe ? const Radius.circular(16) : const Radius.circular(4),
-                              bottomRight: isMe ? const Radius.circular(4) : const Radius.circular(16),
-                            ),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.08),
-                                blurRadius: 4,
-                                offset: const Offset(0, 2),
-                              ),
-                            ],
+            child: StreamBuilder<List<Map<String, dynamic>>>(
+              stream: ChatService.chatStream(
+                user1: widget.currentUser,
+                user2: widget.userName,
+              ),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                final messages = snapshot.data ?? [];
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (_scrollController.hasClients) {
+                    _scrollController.jumpTo(
+                      _scrollController.position.maxScrollExtent,
+                    );
+                  }
+                });
+                return ListView.builder(
+                  controller: _scrollController,
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 16,
+                    horizontal: 12,
+                  ),
+                  itemCount: messages.length,
+                  itemBuilder: (context, index) {
+                    final msg = messages[index];
+                    final isMe = msg['sender'] == widget.currentUser;
+                    return Align(
+                      alignment: isMe
+                          ? Alignment.centerRight
+                          : Alignment.centerLeft,
+                      child: Container(
+                        margin: const EdgeInsets.symmetric(
+                          vertical: 4,
+                          horizontal: 8,
+                        ),
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: isMe ? Colors.blueAccent : Colors.grey[800],
+                          borderRadius: BorderRadius.only(
+                            topLeft: const Radius.circular(16),
+                            topRight: const Radius.circular(16),
+                            bottomLeft: isMe
+                                ? const Radius.circular(16)
+                                : const Radius.circular(4),
+                            bottomRight: isMe
+                                ? const Radius.circular(4)
+                                : const Radius.circular(16),
                           ),
-                          child: Text(
-                            msg['text'] ?? '',
-                            style: TextStyle(color: isMe ? Colors.white : Colors.white70, fontSize: 16),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.08),
+                              blurRadius: 4,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: Text(
+                          msg['text'] ?? '',
+                          style: TextStyle(
+                            color: isMe ? Colors.white : Colors.white70,
+                            fontSize: 16,
                           ),
                         ),
-                      );
-                    },
-                  ),
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
           ),
           Container(
             color: const Color(0xFF23242B),

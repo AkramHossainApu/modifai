@@ -26,31 +26,23 @@ class _SignUpPageState extends State<SignUpPage> {
     final confirmPassword = _confirmPasswordController.text;
     final name = _nameController.text.trim();
 
-    if (name.isEmpty ||
-        email.isEmpty ||
-        password.isEmpty ||
-        confirmPassword.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Please fill all fields')));
+    if (name.isEmpty || email.isEmpty || password.isEmpty || confirmPassword.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please fill all fields')));
       return;
     }
     if (password != confirmPassword) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Passwords do not match')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Passwords do not match')));
       return;
     }
     setState(() => _isLoading = true);
 
     try {
       // Create user with Firebase Auth
-      UserCredential userCredential = await FirebaseAuth.instance
-          .createUserWithEmailAndPassword(email: email, password: password);
+      UserCredential userCredential = await FirebaseAuth.instance.createUserWithEmailAndPassword(email: email, password: password);
       final uid = userCredential.user?.uid;
       if (uid == null) throw Exception('User ID not found');
 
-      // Save user profile to Firestore
+      // Save user profile to Firestore with username
       await FirebaseFirestore.instance.collection('users').doc(uid).set({
         'name': name,
         'email': email,
@@ -59,18 +51,42 @@ class _SignUpPageState extends State<SignUpPage> {
 
       setState(() => _isLoading = false);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Sign up successful! Please login.')),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Sign up successful! Please login.')));
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (context) => const LoginPage()),
       );
+    } on FirebaseAuthException catch (e) {
+      setState(() => _isLoading = false);
+      String errorMsg = 'Error: ${e.message}';
+      if (e.code == 'email-already-in-use') {
+        errorMsg = 'This email is already in use.';
+      } else if (e.code == 'invalid-email') {
+        errorMsg = 'Invalid email address.';
+      } else if (e.code == 'weak-password') {
+        errorMsg = 'Password is too weak.';
+      }
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(errorMsg)));
     } catch (e) {
       setState(() => _isLoading = false);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
+      if (e.toString().contains("'List<Object?>' is not a subtype of type 'PigeonUserDetails?'") && FirebaseAuth.instance.currentUser != null) {
+        final user = FirebaseAuth.instance.currentUser;
+        final uid = user?.uid;
+        if (uid != null) {
+          await FirebaseFirestore.instance.collection('users').doc(uid).set({
+            'name': name,
+            'email': email,
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+        }
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Sign up successful! Please login.')));
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const LoginPage()),
+        );
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
     }
   }
 

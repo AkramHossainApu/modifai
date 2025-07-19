@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'animated_circle.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class SettingsPage extends StatefulWidget {
   final String userName;
@@ -26,18 +27,28 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _loadProfileImage() async {
-    final prefs = await SharedPreferences.getInstance();
-    final path = prefs.getString('profile_image_path');
-    if (path != null && mounted) {
-      setState(() {
-        _profileImage = File(path);
-      });
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+      final data = doc.data();
+      if (data != null && data['profileImagePath'] != null) {
+        setState(() {
+          _profileImage = File(data['profileImagePath']);
+        });
+      }
     }
   }
 
   Future<void> _saveProfileImage(String path) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('profile_image_path', path);
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      await FirebaseFirestore.instance.collection('users').doc(user.uid).update(
+        {'profileImagePath': path},
+      );
+    }
   }
 
   void _editName() async {
@@ -76,8 +87,17 @@ class _SettingsPageState extends State<SettingsPage> {
       setState(() {
         _userName = result;
       });
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .update({'name': _userName});
+      }
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Name updated!')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Name updated!')));
     }
   }
 
@@ -90,9 +110,9 @@ class _SettingsPageState extends State<SettingsPage> {
       });
       await _saveProfileImage(pickedFile.path);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Profile picture updated!')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Profile picture updated!')));
       // Pop with true so parent can refresh immediately
       Navigator.pop(context, true);
     }
@@ -184,7 +204,11 @@ class _SettingsPageState extends State<SettingsPage> {
                                 ? FileImage(_profileImage!)
                                 : null,
                             child: _profileImage == null
-                                ? const Icon(Icons.person, size: 40, color: Colors.white70)
+                                ? const Icon(
+                                    Icons.person,
+                                    size: 40,
+                                    color: Colors.white70,
+                                  )
                                 : null,
                           ),
                         ),

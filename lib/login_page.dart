@@ -65,17 +65,6 @@ class _LoginPageState extends State<LoginPage> {
     final email = _emailController.text.trim();
     final password = _passwordController.text;
 
-    if (email == 'admin@gmail.com' && password == 'admin123') {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool('isAdmin', true);
-      if (!mounted) return;
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => const HomePage()),
-      );
-      return;
-    }
-
     try {
       final userCredential = await FirebaseAuth.instance
           .signInWithEmailAndPassword(email: email, password: password);
@@ -87,32 +76,27 @@ class _LoginPageState extends State<LoginPage> {
         );
         return;
       }
-      final userDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .get();
-      if (!userDoc.exists) {
-        // Auto-create Firestore profile if missing
-        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
-          'name': user.displayName ?? '',
-          'email': user.email ?? '',
-          'createdAt': FieldValue.serverTimestamp(),
-        });
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Profile created in Firestore.')),
-        );
-      }
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool('isAdmin', false);
+      // Get user data from Firebase Auth
+      final userName = user.displayName ?? '';
+      final userEmail = user.email ?? '';
+      // Always sync with Firestore profile
+      await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+        'name': userName,
+        'email': userEmail,
+        'createdAt': FieldValue.serverTimestamp(),
+        'isAdmin': false,
+      }, SetOptions(merge: true));
       final userProfile =
           (await FirebaseFirestore.instance
                   .collection('users')
                   .doc(user.uid)
                   .get())
               .data();
-      await prefs.setString('userName', userProfile?['name'] ?? '');
-      await prefs.setString('userEmail', user.email ?? '');
+      final isAdmin = userProfile?['isAdmin'] == true;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('isAdmin', isAdmin);
+      await prefs.setString('userName', userName);
+      await prefs.setString('userEmail', userEmail);
       if (!mounted) return;
       Navigator.pushReplacement(
         context,
@@ -120,6 +104,35 @@ class _LoginPageState extends State<LoginPage> {
       );
     } catch (e) {
       if (!mounted) return;
+      if (e.toString().contains(
+        "List<Object?>' is not a subtype of type 'PigeonUserDetails?",
+      )) {
+        final user = FirebaseAuth.instance.currentUser;
+        if (user != null) {
+          final userName = user.displayName ?? '';
+          final userEmail = user.email ?? '';
+          final userDoc = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .get();
+          final userProfile = userDoc.data();
+          final isAdmin = userProfile?['isAdmin'] == true;
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setBool('isAdmin', isAdmin);
+          await prefs.setString('userName', userName);
+          await prefs.setString('userEmail', userEmail);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Login successful despite type cast error.'),
+            ),
+          );
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => const HomePage()),
+          );
+          return;
+        }
+      }
       String errorMsg = 'Login error: ${e.toString()}';
       if (e is FirebaseAuthException) {
         switch (e.code) {

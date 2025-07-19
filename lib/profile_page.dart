@@ -1,18 +1,12 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'animated_circle.dart';
 import 'settings_page.dart';
 
 class ProfilePage extends StatefulWidget {
-  final String userName;
-  final String email;
-
-  const ProfilePage({
-    super.key,
-    required this.userName,
-    required this.email,
-  });
+  const ProfilePage({super.key});
 
   @override
   State<ProfilePage> createState() => _ProfilePageState();
@@ -20,26 +14,33 @@ class ProfilePage extends StatefulWidget {
 
 class _ProfilePageState extends State<ProfilePage> {
   String? _profileImagePath;
+  String _userName = '';
+  String _email = '';
 
   @override
   void initState() {
     super.initState();
-    _loadProfileImage();
+    _loadUserData();
   }
 
-  Future<void> _loadProfileImage() async {
-    final prefs = await SharedPreferences.getInstance();
-    final path = prefs.getString('profile_image_path');
-    if (mounted) {
+  Future<void> _loadUserData() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      _email = user.email ?? '';
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+      final data = doc.data();
       setState(() {
-        _profileImagePath = path;
+        _userName = data?['name'] ?? '';
+        _profileImagePath = data?['profileImagePath'];
       });
     }
   }
 
   Future<void> _logout(BuildContext context) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('isAdmin');
+    await FirebaseAuth.instance.signOut();
     if (context.mounted) {
       Navigator.of(context).pushNamedAndRemoveUntil('/login', (route) => false);
     }
@@ -131,7 +132,7 @@ class _ProfilePageState extends State<ProfilePage> {
                       ),
                       const SizedBox(height: 18),
                       Text(
-                        widget.userName,
+                        _userName,
                         style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.w600,
@@ -140,7 +141,7 @@ class _ProfilePageState extends State<ProfilePage> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        widget.email,
+                        _email,
                         style: TextStyle(
                           color: Colors.grey.shade400,
                           fontSize: 16,
@@ -163,13 +164,13 @@ class _ProfilePageState extends State<ProfilePage> {
                           final result = await Navigator.of(context).push(
                             MaterialPageRoute(
                               builder: (context) => SettingsPage(
-                                userName: widget.userName,
-                                email: widget.email,
+                                userName: _userName,
+                                email: _email,
                               ),
                             ),
                           );
                           if (result == true) {
-                            _loadProfileImage();
+                            _loadUserData();
                           }
                         },
                         shape: RoundedRectangleBorder(

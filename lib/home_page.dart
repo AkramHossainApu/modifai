@@ -5,8 +5,9 @@ import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 import 'services/api_service.dart';
 import 'package:photo_view/photo_view.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'massage/m_home_page.dart'; // <-- Import AddUserPage
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -28,6 +29,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   late AnimationController _optionController;
 
   String? _profileImagePath;
+  String _userName = '';
+  String _email = '';
 
   final List<Map<String, String>> _suggestions = [
     {'title': 'Redesign my living room', 'subtitle': 'with a modern style'},
@@ -81,16 +84,41 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     // Set initial placeholder
     _currentPlaceholder = _placeholders[0];
 
-    _loadProfileImage();
+    _loadUserDataFromFirestore();
+  }
+
+  Future<void> _loadUserDataFromFirestore() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+      final data = doc.data();
+      if (mounted && data != null) {
+        setState(() {
+          _profileImagePath = data['profileImagePath'];
+          _userName = data['name'] ?? '';
+          _email = user.email ?? '';
+        });
+      }
+    }
   }
 
   Future<void> _loadProfileImage() async {
-    final prefs = await SharedPreferences.getInstance();
-    final path = prefs.getString('profile_image_path');
-    if (mounted) {
-      setState(() {
-        _profileImagePath = path;
-      });
+    // Sync profile image from Firestore
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+      final data = doc.data();
+      if (mounted) {
+        setState(() {
+          _profileImagePath = data?['profileImagePath'];
+        });
+      }
     }
   }
 
@@ -392,10 +420,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                         onTap: () async {
                           final result = await Navigator.of(context).push(
                             MaterialPageRoute(
-                              builder: (context) => ProfilePage(
-                                userName: 'Admin',
-                                email: 'admin@gmail.com',
-                              ),
+                              builder: (context) => const ProfilePage(),
                             ),
                           );
                           if (result == true) {
@@ -405,7 +430,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                         child: _profileImagePath != null
                             ? CircleAvatar(
                                 radius: 18,
-                                backgroundImage: FileImage(File(_profileImagePath!)),
+                                backgroundImage: FileImage(
+                                  File(_profileImagePath!),
+                                ),
                                 backgroundColor: Colors.white24,
                               )
                             : const CircleAvatar(
@@ -465,7 +492,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                   child: CircleAvatar(
                                     radius: 16,
                                     backgroundColor: Colors.blueGrey[700],
-                                    backgroundImage: AssetImage('assets/modifai_logo.png'),
+                                    backgroundImage: AssetImage(
+                                      'assets/modifai_logo.png',
+                                    ),
                                   ),
                                 ),
                               Flexible(
@@ -476,7 +505,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                   ),
                                   decoration: BoxDecoration(
                                     color: isUser
-                                        ? Colors.blueAccent.shade100.withAlpha(50)
+                                        ? Colors.blueAccent.shade100.withAlpha(
+                                            50,
+                                          )
                                         : Colors.grey[600],
                                     borderRadius: BorderRadius.only(
                                       topLeft: const Radius.circular(18),
@@ -516,7 +547,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                             ),
                                           ],
                                         )
-                                      : msg['image'] != null && (text == null || msg['sender'] == 'ai')
+                                      : msg['image'] != null &&
+                                            (text == null ||
+                                                msg['sender'] == 'ai')
                                       ? GestureDetector(
                                           onTap: () {
                                             showDialog(
@@ -594,10 +627,14 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                             ),
                                           ],
                                         )
-                                      : text != null && text.startsWith('[image:')
+                                      : text != null &&
+                                            text.startsWith('[image:')
                                       ? Builder(
                                           builder: (context) {
-                                            final imagePath = text.replaceAll(RegExp(r'^\[image:|\]$'), '');
+                                            final imagePath = text.replaceAll(
+                                              RegExp(r'^\[image:|\]$'),
+                                              '',
+                                            );
                                             final file = File(imagePath);
                                             if (!file.existsSync()) {
                                               return Text(
@@ -679,7 +716,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                   child: _profileImagePath != null
                                       ? CircleAvatar(
                                           radius: 16,
-                                          backgroundImage: FileImage(File(_profileImagePath!)),
+                                          backgroundImage: FileImage(
+                                            File(_profileImagePath!),
+                                          ),
                                           backgroundColor: Colors.blueAccent,
                                         )
                                       : CircleAvatar(

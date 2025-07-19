@@ -1,0 +1,46 @@
+{
+  "project_info": {
+    "project_number": "543410368633",
+    "project_id": "modifai0127",
+    "storage_bucket": "modifai0127.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:543410368633:android:d6b0d4a9793c73db5b64a8",
+        "android_client_info": {
+          "package_name": "com.example.modifai"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "543410368633-srluk1j26e8qomiklkcmffdiv6q8h9ln.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDItXslqlHw1-pvPo30vcgfqNru5VlT6ss"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "543410368633-srluk1j26e8qomiklkcmffdiv6q8h9ln.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "543410368633-o8c9vv0r92robbpu2fkgna1ofavvmrrs.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.modifai"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

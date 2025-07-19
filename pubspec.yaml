@@ -17,8 +17,9 @@ dependencies:
   mime: ^1.0.5
   photo_view: ^0.14.0
   firebase_core: ^2.30.0
-  cloud_firestore: ^4.17.0
-  firebase_auth: ^4.0.0
+  cloud_firestore: any
+  firebase_auth: any
+  firebase_messaging: any
 
 dev_dependencies:
   flutter_test:
