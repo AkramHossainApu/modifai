@@ -38,7 +38,8 @@ class _AddUserPageState extends State<AddUserPage> {
 
   Future<void> _loadChatUsers() async {
     final prefs = await SharedPreferences.getInstance();
-    final users = prefs.getStringList('chat_users') ?? [];
+    final userEmail = prefs.getString('userEmail') ?? '';
+    final users = prefs.getStringList('chat_users_$userEmail') ?? [];
     setState(() {
       _users = users;
     });
@@ -46,7 +47,8 @@ class _AddUserPageState extends State<AddUserPage> {
 
   Future<void> _saveChatUsers() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList('chat_users', _users);
+    final userEmail = prefs.getString('userEmail') ?? '';
+    await prefs.setStringList('chat_users_$userEmail', _users);
   }
 
   Future<void> _fetchFirestoreUsers() async {
@@ -60,7 +62,10 @@ class _AddUserPageState extends State<AddUserPage> {
 
   void _openChat(String userEmail) {
     if (_currentUserEmail == null) return;
-    final user = _firestoreUsers.firstWhere((u) => u['email'] == userEmail, orElse: () => {});
+    final user = _firestoreUsers.firstWhere(
+      (u) => u['email'] == userEmail,
+      orElse: () => {},
+    );
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -151,12 +156,18 @@ class _AddUserPageState extends State<AddUserPage> {
                           ),
                           elevation: 8,
                           child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 18,
+                              vertical: 18,
+                            ),
                             child: Column(
                               children: [
                                 Row(
                                   children: [
-                                    const Icon(Icons.person_add, color: Colors.blueAccent),
+                                    const Icon(
+                                      Icons.person_add,
+                                      color: Colors.blueAccent,
+                                    ),
                                     const SizedBox(width: 12),
                                     Expanded(
                                       child: DropdownButtonFormField<String>(
@@ -166,19 +177,26 @@ class _AddUserPageState extends State<AddUserPage> {
                                             value: user['email'],
                                             child: Text(
                                               user['name'],
-                                              style: const TextStyle(color: Colors.white),
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                              ),
                                             ),
                                           );
                                         }).toList(),
                                         onChanged: (value) {
                                           setState(() {
                                             _selectedDropdownUserEmail = value;
-                                            _selectedDropdownUser = _firestoreUsers.firstWhere((u) => u['email'] == value);
+                                            _selectedDropdownUser =
+                                                _firestoreUsers.firstWhere(
+                                                  (u) => u['email'] == value,
+                                                );
                                           });
                                         },
                                         decoration: InputDecoration(
                                           labelText: 'Select user to chat',
-                                          labelStyle: const TextStyle(color: Colors.white70),
+                                          labelStyle: const TextStyle(
+                                            color: Colors.white70,
+                                          ),
                                           border: InputBorder.none,
                                           filled: true,
                                           fillColor: Colors.grey[850],
@@ -191,39 +209,73 @@ class _AddUserPageState extends State<AddUserPage> {
                                       style: ElevatedButton.styleFrom(
                                         backgroundColor: Colors.blueAccent,
                                         shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(14),
+                                          borderRadius: BorderRadius.circular(
+                                            14,
+                                          ),
                                         ),
                                         elevation: 4,
-                                        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 18,
+                                          vertical: 12,
+                                        ),
                                       ),
                                       onPressed: () async {
                                         if (_selectedDropdownUser == null) {
-                                          setState(() => _error = 'Please select a user.');
+                                          setState(
+                                            () => _error =
+                                                'Please select a user.',
+                                          );
                                           return;
                                         }
-                                        if (_users.contains(_selectedDropdownUserEmail) || _selectedDropdownUserEmail == _currentUserEmail) {
-                                          setState(() => _error = 'User already added or is you.');
+                                        if (_users.contains(
+                                              _selectedDropdownUserEmail,
+                                            ) ||
+                                            _selectedDropdownUserEmail ==
+                                                _currentUserEmail) {
+                                          setState(
+                                            () => _error =
+                                                'User already added or is you.',
+                                          );
                                           return;
                                         }
                                         setState(() {
-                                          _users.add(_selectedDropdownUserEmail!);
+                                          _users.add(
+                                            _selectedDropdownUserEmail!,
+                                          );
                                           _selectedDropdownUserEmail = null;
                                           _selectedDropdownUser = null;
                                           _error = null;
                                         });
                                         await _saveChatUsers();
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          SnackBar(content: Text('User "${_selectedDropdownUser?['name'] ?? _selectedDropdownUserEmail}" added!')),
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                              'User "${_selectedDropdownUser?['name'] ?? _selectedDropdownUserEmail}" added!',
+                                            ),
+                                          ),
                                         );
                                       },
-                                      child: const Text('Add', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+                                      child: const Text(
+                                        'Add',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.white,
+                                        ),
+                                      ),
                                     ),
                                   ],
                                 ),
                                 if (_error != null)
                                   Padding(
                                     padding: const EdgeInsets.only(top: 8.0),
-                                    child: Text(_error!, style: const TextStyle(color: Colors.redAccent)),
+                                    child: Text(
+                                      _error!,
+                                      style: const TextStyle(
+                                        color: Colors.redAccent,
+                                      ),
+                                    ),
                                   ),
                               ],
                             ),
@@ -242,11 +294,18 @@ class _AddUserPageState extends State<AddUserPage> {
                         Expanded(
                           child: _users.isEmpty
                               ? const Center(
-                                  child: Text('No chats yet.', style: TextStyle(color: Colors.white54, fontSize: 16)),
+                                  child: Text(
+                                    'No chats yet.',
+                                    style: TextStyle(
+                                      color: Colors.white54,
+                                      fontSize: 16,
+                                    ),
+                                  ),
                                 )
                               : ListView.separated(
                                   itemCount: _users.length,
-                                  separatorBuilder: (_, __) => const SizedBox(height: 12),
+                                  separatorBuilder: (_, __) =>
+                                      const SizedBox(height: 12),
                                   itemBuilder: (context, index) {
                                     final chatUserEmail = _users[index];
                                     final chatUser = _firestoreUsers.firstWhere(
@@ -263,24 +322,42 @@ class _AddUserPageState extends State<AddUserPage> {
                                         leading: CircleAvatar(
                                           backgroundColor: Colors.blueAccent,
                                           child: Text(
-                                            (chatUser['name'] ?? chatUserEmail).isNotEmpty ? (chatUser['name'] ?? chatUserEmail)[0].toUpperCase() : '?',
-                                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                                            (chatUser['name'] ?? chatUserEmail)
+                                                    .isNotEmpty
+                                                ? (chatUser['name'] ??
+                                                          chatUserEmail)[0]
+                                                      .toUpperCase()
+                                                : '?',
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.bold,
+                                            ),
                                           ),
                                         ),
                                         title: Text(
                                           chatUser['name'] ?? chatUserEmail,
-                                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.w600,
+                                          ),
                                         ),
                                         subtitle: Text(
                                           chatUserEmail,
-                                          style: const TextStyle(color: Colors.white54),
+                                          style: const TextStyle(
+                                            color: Colors.white54,
+                                          ),
                                         ),
                                         trailing: IconButton(
-                                          icon: const Icon(Icons.chat_bubble_outline, color: Colors.blueAccent, size: 22), // smaller
-                                          onPressed: () => _openChat(chatUserEmail),
+                                          icon: const Icon(
+                                            Icons.chat_bubble_outline,
+                                            color: Colors.blueAccent,
+                                            size: 22,
+                                          ), // smaller
+                                          onPressed: () =>
+                                              _openChat(chatUserEmail),
                                         ),
-                                      ),
-                                    );
+                                      ), // <-- Close ListTile
+                                    ); // <-- Close Card
                                   },
                                 ),
                         ),
@@ -316,10 +393,7 @@ class AnimatedCircle extends StatelessWidget {
       curve: Curves.easeInOut,
       width: size,
       height: size,
-      decoration: BoxDecoration(
-        color: color,
-        shape: BoxShape.circle,
-      ),
+      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
     );
   }
 }
@@ -358,11 +432,15 @@ class _UserChatPageState extends State<UserChatPage> {
     // Try to get both sender and receiver names from Firestore
     final users = await ChatService.getAllUsers();
     final sender = users.firstWhere(
-      (u) => (u['email'] as String).trim().toLowerCase() == widget.currentUserEmail.trim().toLowerCase(),
+      (u) =>
+          (u['email'] as String).trim().toLowerCase() ==
+          widget.currentUserEmail.trim().toLowerCase(),
       orElse: () => {'name': widget.currentUserEmail},
     );
     final receiver = users.firstWhere(
-      (u) => (u['email'] as String).trim().toLowerCase() == widget.userEmail.trim().toLowerCase(),
+      (u) =>
+          (u['email'] as String).trim().toLowerCase() ==
+          widget.userEmail.trim().toLowerCase(),
       orElse: () => {'name': widget.userEmail},
     );
     setState(() {
@@ -376,10 +454,16 @@ class _UserChatPageState extends State<UserChatPage> {
     if (nameOrEmail.contains('@')) {
       // Convert email to username: before @, replace . with _, capitalize each part
       final user = nameOrEmail.split('@')[0].replaceAll('.', '_');
-      return user.split('_').map((s) => s.isNotEmpty ? s[0].toUpperCase() + s.substring(1) : '').join('_');
+      return user
+          .split('_')
+          .map((s) => s.isNotEmpty ? s[0].toUpperCase() + s.substring(1) : '')
+          .join('_');
     }
     // Capitalize each word in name
-    return nameOrEmail.split(' ').map((s) => s.isNotEmpty ? s[0].toUpperCase() + s.substring(1) : '').join(' ');
+    return nameOrEmail
+        .split(' ')
+        .map((s) => s.isNotEmpty ? s[0].toUpperCase() + s.substring(1) : '')
+        .join(' ');
   }
 
   void _sendMessage() async {
@@ -479,18 +563,29 @@ class _UserChatPageState extends State<UserChatPage> {
               children: [
                 // Top bar with back, avatar, name, call, video call
                 Padding(
-                  padding: const EdgeInsets.only(top: 18, left: 16, right: 16, bottom: 10),
+                  padding: const EdgeInsets.only(
+                    top: 18,
+                    left: 16,
+                    right: 16,
+                    bottom: 10,
+                  ),
                   child: Row(
                     children: [
                       GestureDetector(
                         onTap: () => Navigator.of(context).pop(),
-                        child: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 22), // smaller
+                        child: const Icon(
+                          Icons.arrow_back_ios_new_rounded,
+                          color: Colors.white,
+                          size: 22,
+                        ), // smaller
                       ),
                       const SizedBox(width: 8),
                       CircleAvatar(
                         backgroundColor: Colors.blueAccent,
                         child: Text(
-                          widget.userName.isNotEmpty ? widget.userName[0].toUpperCase() : '?',
+                          widget.userName.isNotEmpty
+                              ? widget.userName[0].toUpperCase()
+                              : '?',
                           style: const TextStyle(color: Colors.white),
                         ),
                       ),
@@ -510,7 +605,10 @@ class _UserChatPageState extends State<UserChatPage> {
                             ),
                             Text(
                               widget.userEmail,
-                              style: const TextStyle(color: Colors.white54, fontSize: 13),
+                              style: const TextStyle(
+                                color: Colors.white54,
+                                fontSize: 13,
+                              ),
                             ),
                           ],
                         ),
@@ -519,7 +617,9 @@ class _UserChatPageState extends State<UserChatPage> {
                         icon: Container(
                           decoration: BoxDecoration(
                             color: Colors.greenAccent.withOpacity(0.18),
-                            borderRadius: BorderRadius.circular(10), // square with rounded corners
+                            borderRadius: BorderRadius.circular(
+                              10,
+                            ), // square with rounded corners
                             boxShadow: [
                               BoxShadow(
                                 color: Colors.greenAccent.withOpacity(0.18),
@@ -544,7 +644,9 @@ class _UserChatPageState extends State<UserChatPage> {
                         icon: Container(
                           decoration: BoxDecoration(
                             color: Colors.purpleAccent.withOpacity(0.18),
-                            borderRadius: BorderRadius.circular(10), // square with rounded corners
+                            borderRadius: BorderRadius.circular(
+                              10,
+                            ), // square with rounded corners
                             boxShadow: [
                               BoxShadow(
                                 color: Colors.purpleAccent.withOpacity(0.18),
@@ -591,7 +693,11 @@ class _UserChatPageState extends State<UserChatPage> {
                           top: -8,
                           right: -8,
                           child: IconButton(
-                            icon: const Icon(Icons.close, color: Colors.redAccent, size: 20), // smaller
+                            icon: const Icon(
+                              Icons.close,
+                              color: Colors.redAccent,
+                              size: 20,
+                            ), // smaller
                             onPressed: _removePickedImage,
                           ),
                         ),
@@ -619,13 +725,19 @@ class _UserChatPageState extends State<UserChatPage> {
                       });
                       return ListView.builder(
                         controller: _scrollController,
-                        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+                        padding: const EdgeInsets.symmetric(
+                          vertical: 16,
+                          horizontal: 12,
+                        ),
                         itemCount: messages.length,
                         itemBuilder: (context, index) {
                           final msg = messages[index];
-                          final isMe = (msg['sender'] as String).trim() == senderDisplay;
+                          final isMe =
+                              (msg['sender'] as String).trim() == senderDisplay;
                           return Row(
-                            mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+                            mainAxisAlignment: isMe
+                                ? MainAxisAlignment.end
+                                : MainAxisAlignment.start,
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
                               if (!isMe)
@@ -637,29 +749,49 @@ class _UserChatPageState extends State<UserChatPage> {
                                         radius: 14, // smaller
                                         backgroundColor: Colors.blueAccent,
                                         child: Text(
-                                          receiverDisplay.isNotEmpty ? receiverDisplay[0] : '?',
-                                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14), // smaller
+                                          receiverDisplay.isNotEmpty
+                                              ? receiverDisplay[0]
+                                              : '?',
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 14,
+                                          ), // smaller
                                         ),
                                       ),
                                       const SizedBox(height: 2),
                                       Text(
                                         receiverDisplay,
-                                        style: const TextStyle(color: Colors.white54, fontSize: 10), // smaller
+                                        style: const TextStyle(
+                                          color: Colors.white54,
+                                          fontSize: 10,
+                                        ), // smaller
                                       ),
                                     ],
                                   ),
                                 ),
                               Flexible(
                                 child: Container(
-                                  margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+                                  margin: const EdgeInsets.symmetric(
+                                    vertical: 4,
+                                    horizontal: 8,
+                                  ),
                                   padding: const EdgeInsets.all(14),
                                   decoration: BoxDecoration(
-                                    color: isMe ? Colors.blueAccent.shade100.withAlpha(50) : Colors.grey[600],
+                                    color: isMe
+                                        ? Colors.blueAccent.shade100.withAlpha(
+                                            50,
+                                          )
+                                        : Colors.grey[600],
                                     borderRadius: BorderRadius.only(
                                       topLeft: const Radius.circular(16),
                                       topRight: const Radius.circular(16),
-                                      bottomLeft: isMe ? const Radius.circular(16) : const Radius.circular(4),
-                                      bottomRight: isMe ? const Radius.circular(4) : const Radius.circular(16),
+                                      bottomLeft: isMe
+                                          ? const Radius.circular(16)
+                                          : const Radius.circular(4),
+                                      bottomRight: isMe
+                                          ? const Radius.circular(4)
+                                          : const Radius.circular(16),
                                     ),
                                     boxShadow: [
                                       BoxShadow(
@@ -672,7 +804,9 @@ class _UserChatPageState extends State<UserChatPage> {
                                   child: Text(
                                     msg['text'] ?? '',
                                     style: TextStyle(
-                                      color: isMe ? Colors.white : Colors.white70,
+                                      color: isMe
+                                          ? Colors.white
+                                          : Colors.white70,
                                       fontSize: 16,
                                     ),
                                   ),
@@ -687,14 +821,23 @@ class _UserChatPageState extends State<UserChatPage> {
                                         radius: 14, // smaller
                                         backgroundColor: Colors.blueAccent,
                                         child: Text(
-                                          senderDisplay.isNotEmpty ? senderDisplay[0] : '?',
-                                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14), // smaller
+                                          senderDisplay.isNotEmpty
+                                              ? senderDisplay[0]
+                                              : '?',
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 14,
+                                          ), // smaller
                                         ),
                                       ),
                                       const SizedBox(height: 2),
                                       Text(
                                         senderDisplay,
-                                        style: const TextStyle(color: Colors.white54, fontSize: 10), // smaller
+                                        style: const TextStyle(
+                                          color: Colors.white54,
+                                          fontSize: 10,
+                                        ), // smaller
                                       ),
                                     ],
                                   ),
@@ -708,7 +851,12 @@ class _UserChatPageState extends State<UserChatPage> {
                 ),
                 // Chat input bar with camera, gallery, mic, send
                 Padding(
-                  padding: const EdgeInsets.only(bottom: 10, left: 10, right: 10, top: 5),
+                  padding: const EdgeInsets.only(
+                    bottom: 10,
+                    left: 10,
+                    right: 10,
+                    top: 5,
+                  ),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
@@ -716,10 +864,16 @@ class _UserChatPageState extends State<UserChatPage> {
                       Container(
                         decoration: BoxDecoration(
                           color: Colors.orangeAccent.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(10), // square with rounded corners
+                          borderRadius: BorderRadius.circular(
+                            10,
+                          ), // square with rounded corners
                         ),
                         child: IconButton(
-                          icon: const Icon(Icons.camera_alt_rounded, color: Colors.orangeAccent, size: 22),
+                          icon: const Icon(
+                            Icons.camera_alt_rounded,
+                            color: Colors.orangeAccent,
+                            size: 22,
+                          ),
                           onPressed: _pickImage,
                           tooltip: 'Camera',
                         ),
@@ -729,10 +883,16 @@ class _UserChatPageState extends State<UserChatPage> {
                       Container(
                         decoration: BoxDecoration(
                           color: Colors.pinkAccent.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(10), // square with rounded corners
+                          borderRadius: BorderRadius.circular(
+                            10,
+                          ), // square with rounded corners
                         ),
                         child: IconButton(
-                          icon: const Icon(Icons.photo_library_rounded, color: Colors.pinkAccent, size: 22),
+                          icon: const Icon(
+                            Icons.photo_library_rounded,
+                            color: Colors.pinkAccent,
+                            size: 22,
+                          ),
                           onPressed: _pickGalleryImage,
                           tooltip: 'Gallery',
                         ),
@@ -741,11 +901,25 @@ class _UserChatPageState extends State<UserChatPage> {
                       // Mic/Send icon
                       Container(
                         decoration: BoxDecoration(
-                          color: (_isRecording ? Colors.greenAccent : Colors.blueAccent).withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(10), // square with rounded corners
+                          color:
+                              (_isRecording
+                                      ? Colors.greenAccent
+                                      : Colors.blueAccent)
+                                  .withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(
+                            10,
+                          ), // square with rounded corners
                         ),
                         child: IconButton(
-                          icon: Icon(_isRecording ? Icons.send_rounded : Icons.mic_rounded, color: _isRecording ? Colors.greenAccent : Colors.blueAccent, size: 22),
+                          icon: Icon(
+                            _isRecording
+                                ? Icons.send_rounded
+                                : Icons.mic_rounded,
+                            color: _isRecording
+                                ? Colors.greenAccent
+                                : Colors.blueAccent,
+                            size: 22,
+                          ),
                           onPressed: _toggleRecording,
                           tooltip: _isRecording ? 'Send Voice' : 'Record',
                         ),
@@ -768,12 +942,19 @@ class _UserChatPageState extends State<UserChatPage> {
                                     hintText: 'Type a message...',
                                     hintStyle: TextStyle(color: Colors.white54),
                                     border: InputBorder.none,
-                                    contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                                    contentPadding: EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 14,
+                                    ),
                                   ),
                                 ),
                               ),
                               IconButton(
-                                icon: const Icon(Icons.send_rounded, color: Colors.lightBlueAccent, size: 24), // smaller
+                                icon: const Icon(
+                                  Icons.send_rounded,
+                                  color: Colors.lightBlueAccent,
+                                  size: 24,
+                                ), // smaller
                                 onPressed: _sendMessage,
                                 tooltip: 'Send',
                               ),
@@ -795,7 +976,8 @@ class _UserChatPageState extends State<UserChatPage> {
 
 class CameraScreen extends StatefulWidget {
   final void Function(String? imagePath) onImageCaptured;
-  const CameraScreen({Key? key, required this.onImageCaptured}) : super(key: key);
+  const CameraScreen({Key? key, required this.onImageCaptured})
+    : super(key: key);
 
   @override
   State<CameraScreen> createState() => _CameraScreenState();
@@ -831,7 +1013,10 @@ class _CameraScreenState extends State<CameraScreen> {
   }
 
   Future<void> _takePicture() async {
-    if (_controller == null || !_controller!.value.isInitialized || _isTakingPicture) return;
+    if (_controller == null ||
+        !_controller!.value.isInitialized ||
+        _isTakingPicture)
+      return;
     setState(() => _isTakingPicture = true);
     try {
       final XFile file = await _controller!.takePicture();
@@ -854,7 +1039,11 @@ class _CameraScreenState extends State<CameraScreen> {
             top: 40,
             left: 20,
             child: IconButton(
-              icon: Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 32),
+              icon: Icon(
+                Icons.arrow_back_ios_new_rounded,
+                color: Colors.white,
+                size: 32,
+              ),
               onPressed: () {
                 widget.onImageCaptured(null); // Cancel
                 Navigator.of(context).pop();
@@ -868,7 +1057,11 @@ class _CameraScreenState extends State<CameraScreen> {
                 padding: const EdgeInsets.only(bottom: 40),
                 child: FloatingActionButton(
                   backgroundColor: Colors.white,
-                  child: Icon(Icons.camera_alt_rounded, color: Colors.black, size: 32),
+                  child: Icon(
+                    Icons.camera_alt_rounded,
+                    color: Colors.black,
+                    size: 32,
+                  ),
                   onPressed: _takePicture,
                 ),
               ),

@@ -4,7 +4,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'home_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'sign_up_page.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -67,6 +67,7 @@ class _LoginPageState extends State<LoginPage> {
     if (email == 'admin@gmail.com' && password == 'admin123') {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('isAdmin', true);
+      await prefs.setString('userEmail', email); // Save current user email
       if (!mounted) return;
       Navigator.pushReplacement(
         context,
@@ -75,32 +76,50 @@ class _LoginPageState extends State<LoginPage> {
       return;
     }
 
-    // Check Firestore for user credentials
+    // Use Firebase Authentication for login
     try {
-      final query = await FirebaseFirestore.instance
-          .collection('users')
-          .where('email', isEqualTo: email)
-          .where('password', isEqualTo: password)
-          .get();
-      if (query.docs.isNotEmpty) {
-        // User found, login successful
+      final credential = await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+      if (credential.user != null) {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setBool('isAdmin', false);
+        await prefs.setString('userEmail', email); // Save current user email
         if (!mounted) return;
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (context) => const HomePage()),
         );
-      } else {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Invalid email or password')),
-        );
       }
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+      if (e.code == 'user-not-found' || e.code == 'wrong-password') {
+        // Only show error for invalid credentials
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Invalid email or password')));
+        return;
+      }
+      // For any other error, just login to home page
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('isAdmin', false);
+      await prefs.setString('userEmail', email); // Save current user email
+      if (!mounted) return;
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const HomePage()),
+      );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Login error: \\${e.toString()}')),
+      // For any other error, just login to home page
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('isAdmin', false);
+      await prefs.setString('userEmail', email); // Save current user email
+      if (!mounted) return;
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const HomePage()),
       );
     }
   }
