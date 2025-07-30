@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'profile_page.dart';
-import 'animated_circle.dart';
+import 'animated_circle.dart' as animated_circle;
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 import 'services/api_service.dart';
 import 'package:photo_view/photo_view.dart';
-import 'massage/m_home_page.dart'; // <-- Import AddUserPage
+import 'massage/m_home_page.dart' as massage_page; // <-- Use prefix to avoid AnimatedCircle conflict
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
@@ -100,23 +100,6 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           _profileImagePath = data['profileImagePath'];
           _userName = data['name'] ?? '';
           _email = user.email ?? '';
-        });
-      }
-    }
-  }
-
-  Future<void> _loadProfileImage() async {
-    // Sync profile image from Firestore
-    final user = FirebaseAuth.instance.currentUser;
-    if (user != null) {
-      final doc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .get();
-      final data = doc.data();
-      if (mounted) {
-        setState(() {
-          _profileImagePath = data?['profileImagePath'];
         });
       }
     }
@@ -419,7 +402,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           Positioned(
             top: -100,
             left: -100,
-            child: AnimatedCircle(
+            child: animated_circle.AnimatedCircle(
               color: Colors.blueAccent.withAlpha(30),
               size: 250,
               duration: 3000,
@@ -428,7 +411,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           Positioned(
             bottom: -80,
             right: -80,
-            child: AnimatedCircle(
+            child: animated_circle.AnimatedCircle(
               color: Colors.purpleAccent.withAlpha(25),
               size: 200,
               duration: 4000,
@@ -474,7 +457,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                             ),
                           );
                           if (result == true) {
-                            _loadProfileImage();
+                            // Reload user data from Firestore after profile update
+                            _loadUserDataFromFirestore();
                           }
                         },
                         child: _profileImagePath != null
@@ -500,7 +484,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                         onTap: () {
                           Navigator.of(context).push(
                             MaterialPageRoute(
-                              builder: (context) => const AddUserPage(),
+                              builder: (context) => const massage_page.AddUserPage(),
                             ),
                           );
                         },
