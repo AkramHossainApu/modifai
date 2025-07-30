@@ -15,7 +15,7 @@ class _AddUserPageState extends State<AddUserPage> {
   List<String> _users = [];
   String? _currentUserEmail;
   List<Map<String, dynamic>> _firestoreUsers = [];
-  String? _selectedDropdownUserName;
+  String? _selectedDropdownUserEmail;
   Map<String, dynamic>? _selectedDropdownUser;
 
   @override
@@ -54,12 +54,17 @@ class _AddUserPageState extends State<AddUserPage> {
     });
   }
 
-  void _openChat(String username) {
+  void _openChat(String userEmail) {
     if (_currentUserEmail == null) return;
+    final user = _firestoreUsers.firstWhere((u) => u['email'] == userEmail, orElse: () => {});
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => UserChatPage(userName: username, currentUser: _currentUserEmail!),
+        builder: (context) => UserChatPage(
+          userName: user['name'] ?? userEmail,
+          userEmail: userEmail,
+          currentUserEmail: _currentUserEmail!,
+        ),
       ),
     );
   }
@@ -151,10 +156,10 @@ class _AddUserPageState extends State<AddUserPage> {
                                     const SizedBox(width: 12),
                                     Expanded(
                                       child: DropdownButtonFormField<String>(
-                                        value: _selectedDropdownUserName,
+                                        value: _selectedDropdownUserEmail,
                                         items: _firestoreUsers.map((user) {
                                           return DropdownMenuItem<String>(
-                                            value: user['name'],
+                                            value: user['email'],
                                             child: Text(
                                               user['name'],
                                               style: const TextStyle(color: Colors.white),
@@ -163,8 +168,8 @@ class _AddUserPageState extends State<AddUserPage> {
                                         }).toList(),
                                         onChanged: (value) {
                                           setState(() {
-                                            _selectedDropdownUserName = value;
-                                            _selectedDropdownUser = _firestoreUsers.firstWhere((u) => u['name'] == value);
+                                            _selectedDropdownUserEmail = value;
+                                            _selectedDropdownUser = _firestoreUsers.firstWhere((u) => u['email'] == value);
                                           });
                                         },
                                         decoration: InputDecoration(
@@ -192,19 +197,19 @@ class _AddUserPageState extends State<AddUserPage> {
                                           setState(() => _error = 'Please select a user.');
                                           return;
                                         }
-                                        if (_users.contains(_selectedDropdownUserName) || _selectedDropdownUserName == _currentUserEmail) {
+                                        if (_users.contains(_selectedDropdownUserEmail) || _selectedDropdownUserEmail == _currentUserEmail) {
                                           setState(() => _error = 'User already added or is you.');
                                           return;
                                         }
                                         setState(() {
-                                          _users.add(_selectedDropdownUserName!);
-                                          _selectedDropdownUserName = null;
+                                          _users.add(_selectedDropdownUserEmail!);
+                                          _selectedDropdownUserEmail = null;
                                           _selectedDropdownUser = null;
                                           _error = null;
                                         });
                                         await _saveChatUsers();
                                         ScaffoldMessenger.of(context).showSnackBar(
-                                          SnackBar(content: Text('User "$_selectedDropdownUserName" added!')),
+                                          SnackBar(content: Text('User "${_selectedDropdownUser?['name'] ?? _selectedDropdownUserEmail}" added!')),
                                         );
                                       },
                                       child: const Text('Add', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
@@ -239,9 +244,9 @@ class _AddUserPageState extends State<AddUserPage> {
                                   itemCount: _users.length,
                                   separatorBuilder: (_, __) => const SizedBox(height: 12),
                                   itemBuilder: (context, index) {
-                                    final chatUserName = _users[index];
+                                    final chatUserEmail = _users[index];
                                     final chatUser = _firestoreUsers.firstWhere(
-                                      (u) => u['name'] == chatUserName,
+                                      (u) => u['email'] == chatUserEmail,
                                       orElse: () => <String, dynamic>{},
                                     );
                                     return Card(
@@ -254,21 +259,21 @@ class _AddUserPageState extends State<AddUserPage> {
                                         leading: CircleAvatar(
                                           backgroundColor: Colors.blueAccent,
                                           child: Text(
-                                            chatUserName.isNotEmpty ? chatUserName[0].toUpperCase() : '?',
+                                            (chatUser['name'] ?? chatUserEmail).isNotEmpty ? (chatUser['name'] ?? chatUserEmail)[0].toUpperCase() : '?',
                                             style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                                           ),
                                         ),
                                         title: Text(
-                                          chatUserName,
+                                          chatUser['name'] ?? chatUserEmail,
                                           style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
                                         ),
                                         subtitle: Text(
-                                          chatUser['email'] ?? '',
+                                          chatUserEmail,
                                           style: const TextStyle(color: Colors.white54),
                                         ),
                                         trailing: IconButton(
                                           icon: const Icon(Icons.chat_bubble_outline, color: Colors.blueAccent),
-                                          onPressed: () => _openChat(chatUserName),
+                                          onPressed: () => _openChat(chatUserEmail),
                                         ),
                                       ),
                                     );
@@ -317,11 +322,13 @@ class AnimatedCircle extends StatelessWidget {
 
 class UserChatPage extends StatefulWidget {
   final String userName;
-  final String currentUser;
+  final String userEmail;
+  final String currentUserEmail;
   const UserChatPage({
     super.key,
     required this.userName,
-    required this.currentUser,
+    required this.userEmail,
+    required this.currentUserEmail,
   });
 
   @override
@@ -338,8 +345,8 @@ class _UserChatPageState extends State<UserChatPage> {
     final now = DateTime.now().millisecondsSinceEpoch / 1000.0;
     try {
       await ChatService.sendMessage(
-        sender: widget.currentUser,
-        receiver: widget.userName,
+        sender: widget.currentUserEmail,
+        receiver: widget.userEmail,
         text: text,
         timestamp: now,
       );
@@ -406,14 +413,26 @@ class _UserChatPageState extends State<UserChatPage> {
                         ),
                       ),
                       const SizedBox(width: 12),
-                      Text(
-                        widget.userName,
-                        style: TextStyle(
-                          color: Colors.blueAccent.shade100,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 22,
-                          letterSpacing: 1.2,
-                        ),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            widget.userName,
+                            style: TextStyle(
+                              color: Colors.blueAccent.shade100,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 18,
+                              letterSpacing: 1.2,
+                            ),
+                          ),
+                          Text(
+                            widget.userEmail,
+                            style: const TextStyle(
+                              color: Colors.white54,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
                       ),
                       const Spacer(),
                     ],
@@ -422,8 +441,8 @@ class _UserChatPageState extends State<UserChatPage> {
                 Expanded(
                   child: StreamBuilder<List<Map<String, dynamic>>>(
                     stream: ChatService.chatStream(
-                      user1: widget.currentUser,
-                      user2: widget.userName,
+                      user1: widget.currentUserEmail,
+                      user2: widget.userEmail,
                     ),
                     builder: (context, snapshot) {
                       if (snapshot.connectionState == ConnectionState.waiting) {
@@ -446,7 +465,7 @@ class _UserChatPageState extends State<UserChatPage> {
                         itemCount: messages.length,
                         itemBuilder: (context, index) {
                           final msg = messages[index];
-                          final isMe = msg['sender'] == widget.currentUser;
+                          final isMe = msg['sender'] == widget.currentUserEmail;
                           return Row(
                             mainAxisAlignment: isMe
                                 ? MainAxisAlignment.end
