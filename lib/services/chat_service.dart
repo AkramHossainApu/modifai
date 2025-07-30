@@ -40,8 +40,8 @@ class ChatService {
   }
 
   static String _getChatId(String user1, String user2) {
-    // Use email as unique user ID for chatId, so both users see the same chat
-    final sorted = [user1, user2]..sort();
+    // Use lowercased, trimmed emails for a unique, order-independent chatId
+    final sorted = [user1.trim().toLowerCase(), user2.trim().toLowerCase()]..sort();
     return '${sorted[0]}_${sorted[1]}';
   }
 
