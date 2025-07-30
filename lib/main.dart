@@ -4,6 +4,7 @@ import 'welcome_page.dart';
 import 'login_page.dart';
 import 'home_page.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -15,6 +16,10 @@ class MainApp extends StatelessWidget {
   const MainApp({super.key});
 
   Future<Widget> _getInitialPage() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      return const HomePage();
+    }
     final prefs = await SharedPreferences.getInstance();
     final isAdmin = prefs.getBool('isAdmin') ?? false;
     if (isAdmin) {

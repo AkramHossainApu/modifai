@@ -293,6 +293,56 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // User info header
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Row(
+                  children: [
+                    _profileImagePath != null
+                        ? CircleAvatar(
+                            radius: 24,
+                            backgroundImage: FileImage(
+                              File(_profileImagePath!),
+                            ),
+                            backgroundColor: Colors.white24,
+                          )
+                        : const CircleAvatar(
+                            radius: 24,
+                            backgroundColor: Colors.white24,
+                            child: Icon(
+                              Icons.person,
+                              color: Colors.white,
+                              size: 28,
+                            ),
+                          ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _userName.isNotEmpty ? _userName : 'User',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 17,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            _email.isNotEmpty ? _email : '',
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(color: Colors.white24),
               const Padding(
                 padding: EdgeInsets.all(16.0),
                 child: Text(

@@ -14,37 +14,59 @@ class _AddUserPageState extends State<AddUserPage> {
   String? _error;
   final List<String> _users = [];
   String? _currentUserEmail;
-  List<Map<String, dynamic>> _firestoreUsers = [];
   String? _selectedDropdownUserName;
   Map<String, dynamic>? _selectedDropdownUser;
+  List<Map<String, dynamic>> _allUsers = [];
+  bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    _loadCurrentUser();
+    _loadCurrentUserAndUsers();
+    _loadFriendRequestsAndFriends();
   }
 
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _fetchFirestoreUsers();
-  }
+  List<String> _friendRequests = [];
+  List<String> _friends = [];
 
-  Future<void> _loadCurrentUser() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _currentUserEmail = prefs.getString('userEmail') ?? '';
-    });
-  }
-
-  Future<void> _fetchFirestoreUsers() async {
-    // Fetch all users from Firestore 'users' collection
-    final snapshot = await ChatService.getAllUsers();
-    setState(() {
-      // Only exclude current user by email
-      _firestoreUsers = snapshot
-          .where((u) => u['email'] != _currentUserEmail && u['name'].isNotEmpty)
+  Future<void> _loadCurrentUserAndUsers() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final email = prefs.getString('userEmail') ?? '';
+      setState(() {
+        _currentUserEmail = email;
+      });
+      final users = await ChatService.getAllUsers();
+      print('Fetched users from Firestore:');
+      for (final u in users) {
+        print(u);
+      }
+      final filtered = users
+          .where((u) => u['email'] != email && (u['name'] ?? '').isNotEmpty)
           .toList();
+      setState(() {
+        _allUsers = filtered;
+        _isLoading = false;
+        _error = filtered.isEmpty
+            ? 'No users found or userEmail missing.'
+            : null;
+      });
+    } catch (e) {
+      print('Error loading users: $e');
+      setState(() {
+        _isLoading = false;
+        _error = 'Failed to load users: $e';
+      });
+    }
+  }
+
+  Future<void> _loadFriendRequestsAndFriends() async {
+    if (_currentUserEmail == null) return;
+    final reqs = await ChatService.getFriendRequests(_currentUserEmail!);
+    final frs = await ChatService.getFriends(_currentUserEmail!);
+    setState(() {
+      _friendRequests = reqs;
+      _friends = frs;
     });
   }
 
@@ -56,6 +78,23 @@ class _AddUserPageState extends State<AddUserPage> {
         builder: (context) =>
             UserChatPage(userName: username, currentUser: _currentUserEmail!),
       ),
+    );
+  }
+
+  Future<void> _sendFriendRequest(String toEmail) async {
+    if (_currentUserEmail == null) return;
+    await ChatService.sendFriendRequest(_currentUserEmail!, toEmail);
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('Friend request sent to $toEmail')));
+  }
+
+  Future<void> _acceptFriendRequest(String fromEmail) async {
+    if (_currentUserEmail == null) return;
+    await ChatService.acceptFriendRequest(_currentUserEmail!, fromEmail);
+    await _loadFriendRequestsAndFriends();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('You are now friends with $fromEmail')),
     );
   }
 
@@ -88,80 +127,105 @@ class _AddUserPageState extends State<AddUserPage> {
                   vertical: 12,
                 ),
                 child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.person_add, color: Colors.blueAccent),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: DropdownButtonFormField<String>(
-                            value: _selectedDropdownUserName,
-                            items: _firestoreUsers.map((user) {
-                              return DropdownMenuItem<String>(
-                                value: user['name'],
-                                child: Text(
+                    if (_friendRequests.isNotEmpty)
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Friend Requests',
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          ..._friendRequests.map(
+                            (email) => Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    email,
+                                    style: const TextStyle(color: Colors.white),
+                                  ),
+                                ),
+                                ElevatedButton(
+                                  onPressed: () => _acceptFriendRequest(email),
+                                  child: const Text('Accept'),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const Divider(color: Colors.white24),
+                        ],
+                      ),
+                    const Text(
+                      'All Users',
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    _isLoading
+                        ? const Center(child: CircularProgressIndicator())
+                        : _allUsers.isEmpty
+                        ? const Text(
+                            'No other users found',
+                            style: TextStyle(color: Colors.white54),
+                          )
+                        : ListView.builder(
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            itemCount: _allUsers.length,
+                            itemBuilder: (context, idx) {
+                              final user = _allUsers[idx];
+                              final email = user['email'];
+                              String buttonLabel;
+                              VoidCallback? buttonAction;
+                              Color? buttonColor;
+                              if (_friends.contains(email)) {
+                                buttonLabel = 'Chat';
+                                buttonAction = () {
+                                  setState(() {
+                                    _users.add(user['name']);
+                                    _selectedDropdownUserName = null;
+                                    _selectedDropdownUser = null;
+                                    _error = null;
+                                  });
+                                };
+                                buttonColor = Colors.blueAccent;
+                              } else if (_friendRequests.contains(email)) {
+                                buttonLabel = 'Requested';
+                                buttonAction = null;
+                                buttonColor = Colors.orangeAccent;
+                              } else {
+                                buttonLabel = 'Add';
+                                buttonAction = () => _sendFriendRequest(email);
+                                buttonColor = Colors.green;
+                              }
+                              return ListTile(
+                                leading: const Icon(
+                                  Icons.person,
+                                  color: Colors.white70,
+                                ),
+                                title: Text(
                                   user['name'],
                                   style: const TextStyle(color: Colors.white),
                                 ),
-                              );
-                            }).toList(),
-                            onChanged: (value) {
-                              setState(() {
-                                _selectedDropdownUserName = value;
-                                _selectedDropdownUser = _firestoreUsers
-                                    .firstWhere((u) => u['name'] == value);
-                              });
-                            },
-                            decoration: InputDecoration(
-                              labelText: 'Select user to chat',
-                              labelStyle: const TextStyle(
-                                color: Colors.white70,
-                              ),
-                              border: InputBorder.none,
-                              filled: true,
-                              fillColor: Colors.grey[850],
-                            ),
-                            dropdownColor: Colors.grey[850],
-                          ),
-                        ),
-                        ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.blueAccent,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                          onPressed: () {
-                            if (_selectedDropdownUser == null) {
-                              setState(() => _error = 'Please select a user.');
-                              return;
-                            }
-                            if (_users.contains(_selectedDropdownUserName) ||
-                                _selectedDropdownUserName ==
-                                    _currentUserEmail) {
-                              setState(
-                                () => _error = 'User already added or is you.',
-                              );
-                              return;
-                            }
-                            setState(() {
-                              _users.add(_selectedDropdownUserName!);
-                              _selectedDropdownUserName = null;
-                              _selectedDropdownUser = null;
-                              _error = null;
-                            });
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                  'User "$_selectedDropdownUserName" added!',
+                                subtitle: Text(
+                                  email,
+                                  style: const TextStyle(color: Colors.white54),
                                 ),
-                              ),
-                            );
-                          },
-                          child: const Text('Add'),
-                        ),
-                      ],
-                    ),
+                                trailing: ElevatedButton(
+                                  onPressed: buttonAction,
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: buttonColor,
+                                  ),
+                                  child: Text(buttonLabel),
+                                ),
+                              );
+                            },
+                          ),
                     if (_error != null)
                       Padding(
                         padding: const EdgeInsets.only(top: 8.0),
@@ -197,7 +261,7 @@ class _AddUserPageState extends State<AddUserPage> {
                       separatorBuilder: (_, __) => const SizedBox(height: 10),
                       itemBuilder: (context, index) {
                         final chatUserName = _users[index];
-                        final chatUser = _firestoreUsers.firstWhere(
+                        final chatUser = _allUsers.firstWhere(
                           (u) => u['name'] == chatUserName,
                           orElse: () => <String, dynamic>{},
                         );
