@@ -20,6 +20,8 @@ dependencies:
   cloud_firestore: any
   firebase_auth: any
   firebase_messaging: any
+  material_design_icons_flutter: ^7.0.7296
+  camera: ^0.11.2
 
 dev_dependencies:
   flutter_test:

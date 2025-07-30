@@ -2,6 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/chat_service.dart';
 import 'dart:async';
+import 'package:image_picker/image_picker.dart';
+import 'dart:io';
+import 'package:flutter/cupertino.dart';
+import 'package:camera/camera.dart';
 
 class AddUserPage extends StatefulWidget {
   const AddUserPage({super.key});
@@ -117,7 +121,7 @@ class _AddUserPageState extends State<AddUserPage> {
                         child: const Icon(
                           Icons.arrow_back_ios_new_rounded,
                           color: Colors.white,
-                          size: 28,
+                          size: 22, // smaller
                         ),
                       ),
                       const Spacer(),
@@ -272,7 +276,7 @@ class _AddUserPageState extends State<AddUserPage> {
                                           style: const TextStyle(color: Colors.white54),
                                         ),
                                         trailing: IconButton(
-                                          icon: const Icon(Icons.chat_bubble_outline, color: Colors.blueAccent),
+                                          icon: const Icon(Icons.chat_bubble_outline, color: Colors.blueAccent, size: 22), // smaller
                                           onPressed: () => _openChat(chatUserEmail),
                                         ),
                                       ),
@@ -340,6 +344,9 @@ class _UserChatPageState extends State<UserChatPage> {
   final ScrollController _scrollController = ScrollController();
   String? _receiverName;
   String? _senderName;
+  bool _isRecording = false;
+  // For image picker
+  String? _pickedImagePath;
 
   @override
   void initState() {
@@ -362,6 +369,17 @@ class _UserChatPageState extends State<UserChatPage> {
       _senderName = sender['name'] ?? widget.currentUserEmail;
       _receiverName = receiver['name'] ?? widget.userEmail;
     });
+  }
+
+  String _displayName(String? nameOrEmail) {
+    if (nameOrEmail == null) return '?';
+    if (nameOrEmail.contains('@')) {
+      // Convert email to username: before @, replace . with _, capitalize each part
+      final user = nameOrEmail.split('@')[0].replaceAll('.', '_');
+      return user.split('_').map((s) => s.isNotEmpty ? s[0].toUpperCase() + s.substring(1) : '').join('_');
+    }
+    // Capitalize each word in name
+    return nameOrEmail.split(' ').map((s) => s.isNotEmpty ? s[0].toUpperCase() + s.substring(1) : '').join(' ');
   }
 
   void _sendMessage() async {
@@ -387,21 +405,52 @@ class _UserChatPageState extends State<UserChatPage> {
     }
   }
 
-  String _displayName(String? nameOrEmail) {
-    if (nameOrEmail == null) return '?';
-    if (nameOrEmail.contains('@')) {
-      // Convert email to username: before @, replace . with _, capitalize each part
-      final user = nameOrEmail.split('@')[0].replaceAll('.', '_');
-      return user.split('_').map((s) => s.isNotEmpty ? s[0].toUpperCase() + s.substring(1) : '').join('_');
+  void _pickImage() async {
+    // Use custom camera screen with back button
+    final imagePath = await Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        builder: (context) => CameraScreen(
+          onImageCaptured: (path) {
+            Navigator.of(context).pop(path);
+          },
+        ),
+      ),
+    );
+    if (imagePath != null) {
+      setState(() {
+        _pickedImagePath = imagePath;
+      });
     }
-    // Capitalize each word in name
-    return nameOrEmail.split(' ').map((s) => s.isNotEmpty ? s[0].toUpperCase() + s.substring(1) : '').join(' ');
+  }
+
+  void _pickGalleryImage() async {
+    final picker = await ImagePicker().pickImage(source: ImageSource.gallery);
+    if (picker != null) {
+      setState(() {
+        _pickedImagePath = picker.path;
+      });
+    }
+  }
+
+  void _removePickedImage() {
+    setState(() {
+      _pickedImagePath = null;
+    });
+  }
+
+  void _toggleRecording() {
+    setState(() {
+      _isRecording = !_isRecording;
+    });
+    // Implement actual recording logic as needed
   }
 
   @override
   Widget build(BuildContext context) {
     final sender = widget.currentUserEmail.trim().toLowerCase();
     final receiver = widget.userEmail.trim().toLowerCase();
+    final senderDisplay = _displayName(_senderName);
+    final receiverDisplay = _displayName(_receiverName);
     return Scaffold(
       backgroundColor: const Color(0xFF181A20),
       body: Stack(
@@ -428,22 +477,14 @@ class _UserChatPageState extends State<UserChatPage> {
           SafeArea(
             child: Column(
               children: [
+                // Top bar with back, avatar, name, call, video call
                 Padding(
-                  padding: const EdgeInsets.only(
-                    top: 18,
-                    left: 16,
-                    right: 16,
-                    bottom: 10,
-                  ),
+                  padding: const EdgeInsets.only(top: 18, left: 16, right: 16, bottom: 10),
                   child: Row(
                     children: [
                       GestureDetector(
                         onTap: () => Navigator.of(context).pop(),
-                        child: const Icon(
-                          Icons.arrow_back_ios_new_rounded,
-                          color: Colors.white,
-                          size: 28,
-                        ),
+                        child: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 22), // smaller
                       ),
                       const SizedBox(width: 8),
                       CircleAvatar(
@@ -454,31 +495,110 @@ class _UserChatPageState extends State<UserChatPage> {
                         ),
                       ),
                       const SizedBox(width: 12),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            widget.userName,
-                            style: TextStyle(
-                              color: Colors.blueAccent.shade100,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 18,
-                              letterSpacing: 1.2,
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              widget.userName,
+                              style: TextStyle(
+                                color: Colors.blueAccent.shade100,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 18,
+                                letterSpacing: 1.2,
+                              ),
                             ),
-                          ),
-                          Text(
-                            widget.userEmail,
-                            style: const TextStyle(
-                              color: Colors.white54,
-                              fontSize: 13,
+                            Text(
+                              widget.userEmail,
+                              style: const TextStyle(color: Colors.white54, fontSize: 13),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                      const Spacer(),
+                      IconButton(
+                        icon: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.greenAccent.withOpacity(0.18),
+                            borderRadius: BorderRadius.circular(10), // square with rounded corners
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.greenAccent.withOpacity(0.18),
+                                blurRadius: 8,
+                                offset: Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          padding: const EdgeInsets.all(8),
+                          child: const Icon(
+                            Icons.call_rounded,
+                            color: Colors.greenAccent,
+                            size: 28,
+                          ),
+                        ),
+                        onPressed: () {
+                          // Implement call logic
+                        },
+                        tooltip: 'Call',
+                      ),
+                      IconButton(
+                        icon: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.purpleAccent.withOpacity(0.18),
+                            borderRadius: BorderRadius.circular(10), // square with rounded corners
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.purpleAccent.withOpacity(0.18),
+                                blurRadius: 8,
+                                offset: Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          padding: const EdgeInsets.all(8),
+                          child: const Icon(
+                            Icons.videocam_rounded,
+                            color: Colors.purpleAccent,
+                            size: 28,
+                          ),
+                        ),
+                        onPressed: () {
+                          // Implement video call logic
+                        },
+                        tooltip: 'Video Call',
+                      ),
                     ],
                   ),
                 ),
+                // Picked image preview
+                if (_pickedImagePath != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Stack(
+                      alignment: Alignment.topRight,
+                      children: [
+                        Container(
+                          margin: const EdgeInsets.symmetric(horizontal: 16),
+                          width: 100,
+                          height: 100,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(16),
+                            image: DecorationImage(
+                              image: FileImage(File(_pickedImagePath!)),
+                              fit: BoxFit.cover,
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          top: -8,
+                          right: -8,
+                          child: IconButton(
+                            icon: const Icon(Icons.close, color: Colors.redAccent, size: 20), // smaller
+                            onPressed: _removePickedImage,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                // Chat messages
                 Expanded(
                   child: StreamBuilder<List<Map<String, dynamic>>>(
                     stream: ChatService.chatStream(
@@ -499,21 +619,13 @@ class _UserChatPageState extends State<UserChatPage> {
                       });
                       return ListView.builder(
                         controller: _scrollController,
-                        padding: const EdgeInsets.symmetric(
-                          vertical: 16,
-                          horizontal: 12,
-                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
                         itemCount: messages.length,
                         itemBuilder: (context, index) {
                           final msg = messages[index];
-                          // Compare sender in message to the current user's username
-                          final senderDisplay = _displayName(_senderName);
-                          final receiverDisplay = _displayName(_receiverName);
                           final isMe = (msg['sender'] as String).trim() == senderDisplay;
                           return Row(
-                            mainAxisAlignment: isMe
-                                ? MainAxisAlignment.end
-                                : MainAxisAlignment.start,
+                            mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
                               if (!isMe)
@@ -522,39 +634,32 @@ class _UserChatPageState extends State<UserChatPage> {
                                   child: Column(
                                     children: [
                                       CircleAvatar(
-                                        radius: 16,
+                                        radius: 14, // smaller
                                         backgroundColor: Colors.blueAccent,
                                         child: Text(
                                           receiverDisplay.isNotEmpty ? receiverDisplay[0] : '?',
-                                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14), // smaller
                                         ),
                                       ),
                                       const SizedBox(height: 2),
                                       Text(
                                         receiverDisplay,
-                                        style: const TextStyle(color: Colors.white54, fontSize: 11),
+                                        style: const TextStyle(color: Colors.white54, fontSize: 10), // smaller
                                       ),
                                     ],
                                   ),
                                 ),
                               Flexible(
                                 child: Container(
-                                  margin: const EdgeInsets.symmetric(
-                                    vertical: 4,
-                                    horizontal: 8,
-                                  ),
+                                  margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
                                   padding: const EdgeInsets.all(14),
                                   decoration: BoxDecoration(
                                     color: isMe ? Colors.blueAccent.shade100.withAlpha(50) : Colors.grey[600],
                                     borderRadius: BorderRadius.only(
                                       topLeft: const Radius.circular(16),
                                       topRight: const Radius.circular(16),
-                                      bottomLeft: isMe
-                                          ? const Radius.circular(16)
-                                          : const Radius.circular(4),
-                                      bottomRight: isMe
-                                          ? const Radius.circular(4)
-                                          : const Radius.circular(16),
+                                      bottomLeft: isMe ? const Radius.circular(16) : const Radius.circular(4),
+                                      bottomRight: isMe ? const Radius.circular(4) : const Radius.circular(16),
                                     ),
                                     boxShadow: [
                                       BoxShadow(
@@ -579,17 +684,17 @@ class _UserChatPageState extends State<UserChatPage> {
                                   child: Column(
                                     children: [
                                       CircleAvatar(
-                                        radius: 16,
+                                        radius: 14, // smaller
                                         backgroundColor: Colors.blueAccent,
                                         child: Text(
                                           senderDisplay.isNotEmpty ? senderDisplay[0] : '?',
-                                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14), // smaller
                                         ),
                                       ),
                                       const SizedBox(height: 2),
                                       Text(
                                         senderDisplay,
-                                        style: const TextStyle(color: Colors.white54, fontSize: 11),
+                                        style: const TextStyle(color: Colors.white54, fontSize: 10), // smaller
                                       ),
                                     ],
                                   ),
@@ -601,25 +706,80 @@ class _UserChatPageState extends State<UserChatPage> {
                     },
                   ),
                 ),
-                Container(
-                  color: const Color(0xFF23242B),
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                // Chat input bar with camera, gallery, mic, send
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10, left: 10, right: 10, top: 5),
                   child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _msgController,
-                          style: const TextStyle(color: Colors.white),
-                          decoration: const InputDecoration(
-                            hintText: 'Type a message...',
-                            hintStyle: TextStyle(color: Colors.white54),
-                            border: InputBorder.none,
-                          ),
+                      // Camera icon
+                      Container(
+                        decoration: BoxDecoration(
+                          color: Colors.orangeAccent.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(10), // square with rounded corners
+                        ),
+                        child: IconButton(
+                          icon: const Icon(Icons.camera_alt_rounded, color: Colors.orangeAccent, size: 22),
+                          onPressed: _pickImage,
+                          tooltip: 'Camera',
                         ),
                       ),
-                      IconButton(
-                        icon: const Icon(Icons.send, color: Colors.blueAccent),
-                        onPressed: _sendMessage,
+                      const SizedBox(width: 2),
+                      // Gallery icon
+                      Container(
+                        decoration: BoxDecoration(
+                          color: Colors.pinkAccent.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(10), // square with rounded corners
+                        ),
+                        child: IconButton(
+                          icon: const Icon(Icons.photo_library_rounded, color: Colors.pinkAccent, size: 22),
+                          onPressed: _pickGalleryImage,
+                          tooltip: 'Gallery',
+                        ),
+                      ),
+                      const SizedBox(width: 2),
+                      // Mic/Send icon
+                      Container(
+                        decoration: BoxDecoration(
+                          color: (_isRecording ? Colors.greenAccent : Colors.blueAccent).withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(10), // square with rounded corners
+                        ),
+                        child: IconButton(
+                          icon: Icon(_isRecording ? Icons.send_rounded : Icons.mic_rounded, color: _isRecording ? Colors.greenAccent : Colors.blueAccent, size: 22),
+                          onPressed: _toggleRecording,
+                          tooltip: _isRecording ? 'Send Voice' : 'Record',
+                        ),
+                      ),
+                      const SizedBox(width: 2),
+                      // Chat box
+                      Flexible(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.grey[900],
+                            borderRadius: BorderRadius.circular(24),
+                          ),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: _msgController,
+                                  style: const TextStyle(color: Colors.white),
+                                  decoration: const InputDecoration(
+                                    hintText: 'Type a message...',
+                                    hintStyle: TextStyle(color: Colors.white54),
+                                    border: InputBorder.none,
+                                    contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                                  ),
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.send_rounded, color: Colors.lightBlueAccent, size: 24), // smaller
+                                onPressed: _sendMessage,
+                                tooltip: 'Send',
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
                     ],
                   ),
@@ -627,6 +787,92 @@ class _UserChatPageState extends State<UserChatPage> {
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class CameraScreen extends StatefulWidget {
+  final void Function(String? imagePath) onImageCaptured;
+  const CameraScreen({Key? key, required this.onImageCaptured}) : super(key: key);
+
+  @override
+  State<CameraScreen> createState() => _CameraScreenState();
+}
+
+class _CameraScreenState extends State<CameraScreen> {
+  CameraController? _controller;
+  List<CameraDescription>? _cameras;
+  bool _isReady = false;
+  bool _isTakingPicture = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initCamera();
+  }
+
+  Future<void> _initCamera() async {
+    _cameras = await availableCameras();
+    if (_cameras != null && _cameras!.isNotEmpty) {
+      _controller = CameraController(_cameras![0], ResolutionPreset.medium);
+      await _controller!.initialize();
+      setState(() {
+        _isReady = true;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _takePicture() async {
+    if (_controller == null || !_controller!.value.isInitialized || _isTakingPicture) return;
+    setState(() => _isTakingPicture = true);
+    try {
+      final XFile file = await _controller!.takePicture();
+      widget.onImageCaptured(file.path);
+      Navigator.of(context).pop();
+    } catch (_) {
+      setState(() => _isTakingPicture = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        children: [
+          if (_isReady && _controller != null)
+            Center(child: CameraPreview(_controller!)),
+          Positioned(
+            top: 40,
+            left: 20,
+            child: IconButton(
+              icon: Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 32),
+              onPressed: () {
+                widget.onImageCaptured(null); // Cancel
+                Navigator.of(context).pop();
+              },
+            ),
+          ),
+          if (_isReady)
+            Align(
+              alignment: Alignment.bottomCenter,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 40),
+                child: FloatingActionButton(
+                  backgroundColor: Colors.white,
+                  child: Icon(Icons.camera_alt_rounded, color: Colors.black, size: 32),
+                  onPressed: _takePicture,
+                ),
+              ),
+            ),
         ],
       ),
     );
