@@ -40,7 +40,7 @@ class ChatService {
   }
 
   static String _getChatId(String user1, String user2) {
-    // Ensure chatId is the same for both users
+    // Use email as unique user ID for chatId, so both users see the same chat
     final sorted = [user1, user2]..sort();
     return '${sorted[0]}_${sorted[1]}';
   }

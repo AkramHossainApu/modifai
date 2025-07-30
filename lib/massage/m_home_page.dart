@@ -12,7 +12,7 @@ class AddUserPage extends StatefulWidget {
 
 class _AddUserPageState extends State<AddUserPage> {
   String? _error;
-  final List<String> _users = [];
+  List<String> _users = [];
   String? _currentUserEmail;
   List<Map<String, dynamic>> _firestoreUsers = [];
   String? _selectedDropdownUserName;
@@ -22,12 +22,7 @@ class _AddUserPageState extends State<AddUserPage> {
   void initState() {
     super.initState();
     _loadCurrentUser();
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _fetchFirestoreUsers();
+    _loadChatUsers();
   }
 
   Future<void> _loadCurrentUser() async {
@@ -35,6 +30,19 @@ class _AddUserPageState extends State<AddUserPage> {
     setState(() {
       _currentUserEmail = prefs.getString('userEmail') ?? '';
     });
+  }
+
+  Future<void> _loadChatUsers() async {
+    final prefs = await SharedPreferences.getInstance();
+    final users = prefs.getStringList('chat_users') ?? [];
+    setState(() {
+      _users = users;
+    });
+  }
+
+  Future<void> _saveChatUsers() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('chat_users', _users);
   }
 
   Future<void> _fetchFirestoreUsers() async {
@@ -54,6 +62,12 @@ class _AddUserPageState extends State<AddUserPage> {
         builder: (context) => UserChatPage(userName: username, currentUser: _currentUserEmail!),
       ),
     );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _fetchFirestoreUsers();
   }
 
   @override
@@ -173,7 +187,7 @@ class _AddUserPageState extends State<AddUserPage> {
                                         elevation: 4,
                                         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
                                       ),
-                                      onPressed: () {
+                                      onPressed: () async {
                                         if (_selectedDropdownUser == null) {
                                           setState(() => _error = 'Please select a user.');
                                           return;
@@ -188,6 +202,7 @@ class _AddUserPageState extends State<AddUserPage> {
                                           _selectedDropdownUser = null;
                                           _error = null;
                                         });
+                                        await _saveChatUsers();
                                         ScaffoldMessenger.of(context).showSnackBar(
                                           SnackBar(content: Text('User "$_selectedDropdownUserName" added!')),
                                         );
