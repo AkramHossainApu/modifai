@@ -338,17 +338,43 @@ class UserChatPage extends StatefulWidget {
 class _UserChatPageState extends State<UserChatPage> {
   final TextEditingController _msgController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  String? _receiverName;
+  String? _senderName;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadNames();
+  }
+
+  Future<void> _loadNames() async {
+    // Try to get both sender and receiver names from Firestore
+    final users = await ChatService.getAllUsers();
+    final sender = users.firstWhere(
+      (u) => (u['email'] as String).trim().toLowerCase() == widget.currentUserEmail.trim().toLowerCase(),
+      orElse: () => {'name': widget.currentUserEmail},
+    );
+    final receiver = users.firstWhere(
+      (u) => (u['email'] as String).trim().toLowerCase() == widget.userEmail.trim().toLowerCase(),
+      orElse: () => {'name': widget.userEmail},
+    );
+    setState(() {
+      _senderName = sender['name'] ?? widget.currentUserEmail;
+      _receiverName = receiver['name'] ?? widget.userEmail;
+    });
+  }
 
   void _sendMessage() async {
     final text = _msgController.text.trim();
     if (text.isEmpty) return;
     final now = DateTime.now().millisecondsSinceEpoch / 1000.0;
-    final sender = widget.currentUserEmail.trim().toLowerCase();
-    final receiver = widget.userEmail.trim().toLowerCase();
+    // Use usernames for sender and receiver
+    String senderUsername = _displayName(_senderName);
+    String receiverUsername = _displayName(_receiverName);
     try {
       await ChatService.sendMessage(
-        sender: sender,
-        receiver: receiver,
+        sender: senderUsername,
+        receiver: receiverUsername,
         text: text,
         timestamp: now,
       );
@@ -359,6 +385,17 @@ class _UserChatPageState extends State<UserChatPage> {
         context,
       ).showSnackBar(SnackBar(content: Text('Failed to send message: $e')));
     }
+  }
+
+  String _displayName(String? nameOrEmail) {
+    if (nameOrEmail == null) return '?';
+    if (nameOrEmail.contains('@')) {
+      // Convert email to username: before @, replace . with _, capitalize each part
+      final user = nameOrEmail.split('@')[0].replaceAll('.', '_');
+      return user.split('_').map((s) => s.isNotEmpty ? s[0].toUpperCase() + s.substring(1) : '').join('_');
+    }
+    // Capitalize each word in name
+    return nameOrEmail.split(' ').map((s) => s.isNotEmpty ? s[0].toUpperCase() + s.substring(1) : '').join(' ');
   }
 
   @override
@@ -469,7 +506,10 @@ class _UserChatPageState extends State<UserChatPage> {
                         itemCount: messages.length,
                         itemBuilder: (context, index) {
                           final msg = messages[index];
-                          final isMe = msg['sender'] == widget.currentUserEmail;
+                          // Compare sender in message to the current user's username
+                          final senderDisplay = _displayName(_senderName);
+                          final receiverDisplay = _displayName(_receiverName);
+                          final isMe = (msg['sender'] as String).trim() == senderDisplay;
                           return Row(
                             mainAxisAlignment: isMe
                                 ? MainAxisAlignment.end
@@ -479,13 +519,22 @@ class _UserChatPageState extends State<UserChatPage> {
                               if (!isMe)
                                 Padding(
                                   padding: const EdgeInsets.only(right: 8.0),
-                                  child: CircleAvatar(
-                                    radius: 16,
-                                    backgroundColor: Colors.blueAccent,
-                                    child: Text(
-                                      widget.userName.isNotEmpty ? widget.userName[0].toUpperCase() : '?',
-                                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                                    ),
+                                  child: Column(
+                                    children: [
+                                      CircleAvatar(
+                                        radius: 16,
+                                        backgroundColor: Colors.blueAccent,
+                                        child: Text(
+                                          receiverDisplay.isNotEmpty ? receiverDisplay[0] : '?',
+                                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        receiverDisplay,
+                                        style: const TextStyle(color: Colors.white54, fontSize: 11),
+                                      ),
+                                    ],
                                   ),
                                 ),
                               Flexible(
@@ -527,14 +576,22 @@ class _UserChatPageState extends State<UserChatPage> {
                               if (isMe)
                                 Padding(
                                   padding: const EdgeInsets.only(left: 8.0),
-                                  child: CircleAvatar(
-                                    radius: 16,
-                                    backgroundColor: Colors.blueAccent,
-                                    child: Icon(
-                                      Icons.person,
-                                      color: Colors.white,
-                                      size: 18,
-                                    ),
+                                  child: Column(
+                                    children: [
+                                      CircleAvatar(
+                                        radius: 16,
+                                        backgroundColor: Colors.blueAccent,
+                                        child: Text(
+                                          senderDisplay.isNotEmpty ? senderDisplay[0] : '?',
+                                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        senderDisplay,
+                                        style: const TextStyle(color: Colors.white54, fontSize: 11),
+                                      ),
+                                    ],
                                   ),
                                 ),
                             ],
