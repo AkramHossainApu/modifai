@@ -343,10 +343,12 @@ class _UserChatPageState extends State<UserChatPage> {
     final text = _msgController.text.trim();
     if (text.isEmpty) return;
     final now = DateTime.now().millisecondsSinceEpoch / 1000.0;
+    final sender = widget.currentUserEmail.trim().toLowerCase();
+    final receiver = widget.userEmail.trim().toLowerCase();
     try {
       await ChatService.sendMessage(
-        sender: widget.currentUserEmail,
-        receiver: widget.userEmail,
+        sender: sender,
+        receiver: receiver,
         text: text,
         timestamp: now,
       );
@@ -361,6 +363,8 @@ class _UserChatPageState extends State<UserChatPage> {
 
   @override
   Widget build(BuildContext context) {
+    final sender = widget.currentUserEmail.trim().toLowerCase();
+    final receiver = widget.userEmail.trim().toLowerCase();
     return Scaffold(
       backgroundColor: const Color(0xFF181A20),
       body: Stack(
@@ -441,8 +445,8 @@ class _UserChatPageState extends State<UserChatPage> {
                 Expanded(
                   child: StreamBuilder<List<Map<String, dynamic>>>(
                     stream: ChatService.chatStream(
-                      user1: widget.currentUserEmail,
-                      user2: widget.userEmail,
+                      user1: sender,
+                      user2: receiver,
                     ),
                     builder: (context, snapshot) {
                       if (snapshot.connectionState == ConnectionState.waiting) {
