@@ -772,49 +772,11 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                     ),
                   ),
                 ),
-                // Show picked image preview above chat bar
-                if (_pickedImage != null)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Stack(
-                      alignment: Alignment.topRight,
-                      children: [
-                        Container(
-                          margin: const EdgeInsets.symmetric(horizontal: 16),
-                          width: 100,
-                          height: 100,
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(16),
-                            image: DecorationImage(
-                              image: FileImage(_pickedImage!),
-                              fit: BoxFit.cover,
-                            ),
-                          ),
-                        ),
-                        Positioned(
-                          top: -8,
-                          right: -8,
-                          child: IconButton(
-                            icon: const Icon(
-                              Icons.close,
-                              color: Colors.redAccent,
-                            ),
-                            onPressed: () {
-                              setState(() {
-                                _pickedImage = null;
-                              });
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
                 // Suggestion bar a bit above the chat bar
                 if (_chatController.text.isEmpty &&
                     _pickedImage == null &&
                     !_isLoading &&
-                    _chatHistory
-                        .isEmpty) // <-- Only show suggestions if chat is empty
+                    _chatHistory.isEmpty) // <-- Only show suggestions if chat is empty
                   Padding(
                     padding: const EdgeInsets.only(bottom: 28),
                     child: SizedBox(
@@ -957,30 +919,68 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                           child: Row(
                             children: [
                               Expanded(
-                                child: TextField(
-                                  controller: _chatController,
-                                  focusNode: _chatFocusNode,
-                                  style: const TextStyle(color: Colors.white),
-                                  decoration: InputDecoration(
-                                    hintText: _currentPlaceholder,
-                                    hintStyle: TextStyle(
-                                      color: Colors.grey.shade400,
-                                      fontWeight: FontWeight.w400,
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (_pickedImage != null) ...[
+                                      Stack(
+                                        alignment: Alignment.topRight,
+                                        children: [
+                                          ClipRRect(
+                                            borderRadius: BorderRadius.circular(12),
+                                            child: Image.file(
+                                              _pickedImage!,
+                                              width: double.infinity,
+                                              height: 160,
+                                              fit: BoxFit.cover,
+                                            ),
+                                          ),
+                                          Positioned(
+                                            top: 8,
+                                            right: 8,
+                                            child: GestureDetector(
+                                              onTap: () {
+                                                setState(() {
+                                                  _pickedImage = null;
+                                                });
+                                              },
+                                              child: Container(
+                                                decoration: BoxDecoration(
+                                                  color: Colors.black54,
+                                                  shape: BoxShape.circle,
+                                                ),
+                                                child: const Icon(Icons.close, color: Colors.white, size: 20),
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 8),
+                                    ],
+                                    TextField(
+                                      controller: _chatController,
+                                      focusNode: _chatFocusNode,
+                                      style: const TextStyle(color: Colors.white),
+                                      decoration: InputDecoration(
+                                        hintText: _currentPlaceholder,
+                                        hintStyle: TextStyle(
+                                          color: Colors.grey.shade400,
+                                          fontWeight: FontWeight.w400,
+                                        ),
+                                        border: InputBorder.none,
+                                        contentPadding: const EdgeInsets.symmetric(
+                                          horizontal: 16,
+                                          vertical: 16,
+                                        ),
+                                      ),
+                                      minLines: _pickedImage != null ? 6 : 1,
+                                      maxLines: 10,
+                                      onSubmitted: (_) {
+                                        _handleSend();
+                                        FocusScope.of(context).requestFocus(_chatFocusNode);
+                                      },
                                     ),
-                                    border: InputBorder.none,
-                                    contentPadding: const EdgeInsets.symmetric(
-                                      horizontal: 16,
-                                      vertical: 16,
-                                    ),
-                                  ),
-                                  minLines: 1,
-                                  maxLines: 4,
-                                  onSubmitted: (_) {
-                                    _handleSend();
-                                    FocusScope.of(
-                                      context,
-                                    ).requestFocus(_chatFocusNode);
-                                  },
+                                  ],
                                 ),
                               ),
                               IconButton(
@@ -989,9 +989,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                   color: Colors.blueAccent,
                                   size: 24,
                                 ),
-                                onPressed:
-                                    _isLoading ||
-                                        _chatController.text.trim().isEmpty
+                                onPressed: _isLoading || (_chatController.text.trim().isEmpty && _pickedImage == null)
                                     ? null
                                     : _handleSend,
                               ),

@@ -36,18 +36,23 @@ class ChatService {
     required String receiver,
     required String text,
     required double timestamp,
+    String? imagePath, // Optional image path
   }) async {
     final chatId = await getChatIdByUsernames(sender, receiver);
+    final messageData = {
+      'sender': sender,
+      'receiver': receiver,
+      'text': text,
+      'timestamp': timestamp,
+    };
+    if (imagePath != null && imagePath.isNotEmpty) {
+      messageData['image'] = imagePath;
+    }
     await FirebaseFirestore.instance
         .collection('chats')
         .doc(chatId)
         .collection('messages')
-        .add({
-          'sender': sender,
-          'receiver': receiver,
-          'text': text,
-          'timestamp': timestamp,
-        });
+        .add(messageData);
   }
 
   static Future<List<Map<String, dynamic>>> getChatHistory({
