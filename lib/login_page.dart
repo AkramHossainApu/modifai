@@ -35,23 +35,19 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Future<void> _handleGoogleSignIn() async {
-    final GoogleSignIn googleSignIn = GoogleSignIn();
     try {
-      final GoogleSignInAccount? account = await googleSignIn.signIn();
+      final GoogleSignInAccount account = await GoogleSignIn.instance
+          .authenticate(scopeHint: <String>["email"]);
       if (!mounted) return;
-      if (account != null) {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setBool('isAdmin', true);
-
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Signed in as ${account.email}')),
-        );
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const HomePage()),
-        );
-      }
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('isAdmin', true);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Signed in as ${account.email}')));
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const HomePage()),
+      );
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(

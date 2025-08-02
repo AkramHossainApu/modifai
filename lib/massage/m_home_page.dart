@@ -107,25 +107,33 @@ class _AddUserPageState extends State<AddUserPage> {
       if (currentUser == null) continue;
       // Cancel previous subscription if exists
       _chatSubscriptions[chatUserEmail]?.cancel();
-      _chatSubscriptions[chatUserEmail] = ChatService.chatStream(user1: currentUser, user2: chatUserEmail).listen((messages) {
-        if (messages.isNotEmpty) {
-          final lastMsg = messages.last;
-          final lastTimestamp = (lastMsg['timestamp'] ?? 0).toDouble();
-          final isFromOther = (lastMsg['sender'] as String).trim().toLowerCase() != currentUser.trim().toLowerCase();
-          setState(() {
-            _chatLastTimestamps[chatUserEmail] = lastTimestamp;
-            // Only mark as unread if the last message is from the other user and is new
-            if (isFromOther && (_unreadChats.contains(chatUserEmail) == false || _chatLastTimestamps[chatUserEmail] != lastTimestamp)) {
-              _unreadChats.add(chatUserEmail);
-            }
-            // Move chat to top if new message from other user
-            if (isFromOther) {
-              _users.remove(chatUserEmail);
-              _users.insert(0, chatUserEmail);
+      _chatSubscriptions[chatUserEmail] =
+          ChatService.chatStream(
+            user1: currentUser,
+            user2: chatUserEmail,
+          ).listen((messages) {
+            if (messages.isNotEmpty) {
+              final lastMsg = messages.last;
+              final lastTimestamp = (lastMsg['timestamp'] ?? 0).toDouble();
+              final isFromOther =
+                  (lastMsg['sender'] as String).trim().toLowerCase() !=
+                  currentUser.trim().toLowerCase();
+              setState(() {
+                _chatLastTimestamps[chatUserEmail] = lastTimestamp;
+                // Only mark as unread if the last message is from the other user and is new
+                if (isFromOther &&
+                    (_unreadChats.contains(chatUserEmail) == false ||
+                        _chatLastTimestamps[chatUserEmail] != lastTimestamp)) {
+                  _unreadChats.add(chatUserEmail);
+                }
+                // Move chat to top if new message from other user
+                if (isFromOther) {
+                  _users.remove(chatUserEmail);
+                  _users.insert(0, chatUserEmail);
+                }
+              });
             }
           });
-        }
-      });
     }
     // Remove unread status for chats that are no longer in the list
     setState(() {
@@ -135,8 +143,12 @@ class _AddUserPageState extends State<AddUserPage> {
 
   List<String> get _sortedUsers {
     // Separate users with and without messages
-    final usersWithMsg = _users.where((u) => (_chatLastTimestamps[u] ?? 0) > 0).toList();
-    final usersNoMsg = _users.where((u) => (_chatLastTimestamps[u] ?? 0) == 0).toList();
+    final usersWithMsg = _users
+        .where((u) => (_chatLastTimestamps[u] ?? 0) > 0)
+        .toList();
+    final usersNoMsg = _users
+        .where((u) => (_chatLastTimestamps[u] ?? 0) == 0)
+        .toList();
     // Sort users with messages by recency (descending)
     usersWithMsg.sort((a, b) {
       final aLastMsg = _chatLastTimestamps[a] ?? 0;
@@ -184,8 +196,13 @@ class _AddUserPageState extends State<AddUserPage> {
                               backgroundColor: Colors.blueAccent.shade100,
                               radius: 14,
                               child: Text(
-                                user['name'].isNotEmpty ? user['name'][0].toUpperCase() : '?',
-                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                                user['name'].isNotEmpty
+                                    ? user['name'][0].toUpperCase()
+                                    : '?',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
                             ),
                             const SizedBox(width: 10),
@@ -215,18 +232,30 @@ class _AddUserPageState extends State<AddUserPage> {
                       ),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
-                        borderSide: const BorderSide(color: Colors.blueAccent, width: 1.5),
+                        borderSide: const BorderSide(
+                          color: Colors.blueAccent,
+                          width: 1.5,
+                        ),
                       ),
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
-                        borderSide: const BorderSide(color: Colors.blueAccent, width: 1.5),
+                        borderSide: const BorderSide(
+                          color: Colors.blueAccent,
+                          width: 1.5,
+                        ),
                       ),
                       filled: true,
                       fillColor: Colors.grey[850],
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
                     ),
                     dropdownColor: Colors.grey[850],
-                    icon: const Icon(Icons.arrow_drop_down, color: Colors.blueAccent),
+                    icon: const Icon(
+                      Icons.arrow_drop_down,
+                      color: Colors.blueAccent,
+                    ),
                   ),
                   const SizedBox(height: 24),
                   Align(
@@ -238,18 +267,26 @@ class _AddUserPageState extends State<AddUserPage> {
                           borderRadius: BorderRadius.circular(14),
                         ),
                         elevation: 4,
-                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 14,
+                        ),
                       ),
                       onPressed: () async {
                         if (selectedUserEmail == null) {
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Please select a user.')),
+                            const SnackBar(
+                              content: Text('Please select a user.'),
+                            ),
                           );
                           return;
                         }
-                        if (_users.contains(selectedUserEmail) || selectedUserEmail == _currentUserEmail) {
+                        if (_users.contains(selectedUserEmail) ||
+                            selectedUserEmail == _currentUserEmail) {
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('User already added or is you.')),
+                            const SnackBar(
+                              content: Text('User already added or is you.'),
+                            ),
                           );
                           return;
                         }
@@ -258,11 +295,9 @@ class _AddUserPageState extends State<AddUserPage> {
                         });
                         await _saveChatUsers();
                         Navigator.of(context).pop();
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('User added!'),
-                          ),
-                        );
+                        ScaffoldMessenger.of(
+                          context,
+                        ).showSnackBar(SnackBar(content: Text('User added!')));
                       },
                       child: const Text(
                         'Add',
@@ -339,7 +374,11 @@ class _AddUserPageState extends State<AddUserPage> {
                       ),
                       const Spacer(),
                       IconButton(
-                        icon: const Icon(Icons.person_add_alt_1_rounded, color: Colors.blueAccent, size: 28),
+                        icon: const Icon(
+                          Icons.person_add_alt_1_rounded,
+                          color: Colors.blueAccent,
+                          size: 28,
+                        ),
                         onPressed: _showAddUserSheet,
                         tooltip: 'Add user to chat',
                       ),
@@ -375,24 +414,34 @@ class _AddUserPageState extends State<AddUserPage> {
                                 )
                               : ListView.separated(
                                   itemCount: _sortedUsers.length,
-                                  separatorBuilder: (_, __) => const SizedBox(height: 12),
+                                  separatorBuilder: (_, __) =>
+                                      const SizedBox(height: 12),
                                   itemBuilder: (context, index) {
                                     final chatUserEmail = _sortedUsers[index];
                                     final chatUser = _firestoreUsers.firstWhere(
                                       (u) => u['email'] == chatUserEmail,
                                       orElse: () => <String, dynamic>{},
                                     );
-                                    final isHighlighted = _unreadChats.contains(chatUserEmail);
+                                    final isHighlighted = _unreadChats.contains(
+                                      chatUserEmail,
+                                    );
                                     return AnimatedContainer(
-                                      duration: const Duration(milliseconds: 500),
+                                      duration: const Duration(
+                                        milliseconds: 500,
+                                      ),
                                       curve: Curves.easeInOut,
                                       decoration: BoxDecoration(
-                                        color: isHighlighted ? Colors.blueAccent.withOpacity(0.18) : Colors.grey[850],
+                                        color: isHighlighted
+                                            ? Colors.blueAccent.withOpacity(
+                                                0.18,
+                                              )
+                                            : Colors.grey[850],
                                         borderRadius: BorderRadius.circular(16),
                                         boxShadow: isHighlighted
                                             ? [
                                                 BoxShadow(
-                                                  color: Colors.blueAccent.withOpacity(0.18),
+                                                  color: Colors.blueAccent
+                                                      .withOpacity(0.18),
                                                   blurRadius: 12,
                                                   offset: const Offset(0, 2),
                                                 ),
@@ -403,10 +452,15 @@ class _AddUserPageState extends State<AddUserPage> {
                                         leading: Stack(
                                           children: [
                                             CircleAvatar(
-                                              backgroundColor: Colors.blueAccent,
+                                              backgroundColor:
+                                                  Colors.blueAccent,
                                               child: Text(
-                                                (chatUser['name'] ?? chatUserEmail).isNotEmpty
-                                                    ? (chatUser['name'] ?? chatUserEmail)[0].toUpperCase()
+                                                (chatUser['name'] ??
+                                                            chatUserEmail)
+                                                        .isNotEmpty
+                                                    ? (chatUser['name'] ??
+                                                              chatUserEmail)[0]
+                                                          .toUpperCase()
                                                     : '?',
                                                 style: const TextStyle(
                                                   color: Colors.white,
@@ -424,7 +478,10 @@ class _AddUserPageState extends State<AddUserPage> {
                                                   decoration: BoxDecoration(
                                                     color: Colors.blueAccent,
                                                     shape: BoxShape.circle,
-                                                    border: Border.all(color: Colors.white, width: 2),
+                                                    border: Border.all(
+                                                      color: Colors.white,
+                                                      width: 2,
+                                                    ),
                                                   ),
                                                 ),
                                               ),
@@ -449,7 +506,8 @@ class _AddUserPageState extends State<AddUserPage> {
                                             color: Colors.blueAccent,
                                             size: 22,
                                           ),
-                                          onPressed: () => _openChat(chatUserEmail),
+                                          onPressed: () =>
+                                              _openChat(chatUserEmail),
                                         ),
                                         onTap: () => _openChat(chatUserEmail),
                                       ),
