@@ -1,13 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/chat_service.dart';
+import '../services/group_chat_service.dart';
+import 'user_chat_page.dart';
+import 'animated_circle.dart';
 import 'dart:async';
-import 'package:image_picker/image_picker.dart';
-import 'dart:io';
-import 'package:flutter/cupertino.dart';
-import 'package:camera/camera.dart';
-import 'chat_profile_page.dart';
-import 'dart:ui';
 
 class AddUserPage extends StatefulWidget {
   const AddUserPage({super.key});
@@ -23,6 +20,7 @@ class _AddUserPageState extends State<AddUserPage> {
   Map<String, double> _chatLastTimestamps = {};
   Set<String> _unreadChats = {};
   Map<String, StreamSubscription> _chatSubscriptions = {};
+  late final ValueNotifier<bool> _fabExpanded = ValueNotifier(false);
 
   @override
   void initState() {
@@ -36,6 +34,7 @@ class _AddUserPageState extends State<AddUserPage> {
     for (final sub in _chatSubscriptions.values) {
       sub.cancel();
     }
+    _fabExpanded.dispose();
     super.dispose();
   }
 
@@ -70,36 +69,105 @@ class _AddUserPageState extends State<AddUserPage> {
     });
   }
 
-  void _openChat(String userEmail) {
+  Future<void> _loadAllChatsForCurrentUser() async {
+    if (_currentUserEmail == null) return;
+    final username = _currentUserEmail!.split('@')[0];
+    // Fetch user-to-user chat IDs from Firestore
+    final chatDocs =
+        await ChatService.getChatDocumentIds(); // Should return List<String>
+    // Robustly match normal chats (user-to-user, 2 parts, any order)
+    final userChats = chatDocs.where((id) {
+      final parts = id.split('_');
+      return parts.length == 2 && parts.contains(username);
+    }).toList();
+    // Fetch group chat IDs from Firestore
+    final groupDocs =
+        await GroupChatService.getGroupChatDocumentIds(); // Should return List<String>
+    final groupChats = groupDocs
+        .where(
+          (id) => id.split('_').contains(username) && id.split('_').length > 2,
+        )
+        .toList();
+    // Merge with local users
+    final allChats = {..._users, ...userChats, ...groupChats}.toList();
+    setState(() {
+      _users = allChats;
+    });
+    await _saveChatUsers();
+  }
+
+  // Helper to check if a chat is a group chat
+  bool _isGroupChat(String chatId) {
+    // Group chat IDs have more than 2 emails joined by _
+    return chatId.split('_').length > 2;
+  }
+
+  // Helper to get group name from group chatId
+  Future<String> _getGroupName(String groupId) async {
+    final users = groupId.split('_');
+    // Try to get names from Firestore
+    final snapshot = await ChatService.getAllUsers();
+    final nameList = users.map((emailOrName) {
+      final user = snapshot.firstWhere(
+        (u) => u['name'] == emailOrName || u['email'] == emailOrName,
+        orElse: () => {'name': emailOrName},
+      );
+      return user['name'] ?? emailOrName;
+    }).toList();
+    return nameList.join(', ');
+  }
+
+  void _openChat(String chatId) async {
     if (_currentUserEmail == null) return;
     setState(() {
-      _unreadChats.remove(userEmail); // Mark as read when opened
+      _unreadChats.remove(chatId);
     });
-    final user = _firestoreUsers.firstWhere(
-      (u) => u['email'] == userEmail,
-      orElse: () => {},
-    );
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => UserChatPage(
-          userName: user['name'] ?? userEmail,
-          userEmail: userEmail,
-          currentUserEmail: _currentUserEmail!,
+    if (_isGroupChat(chatId)) {
+      // Open group chat
+      final groupName = await _getGroupName(chatId);
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => UserChatPage(
+            userName: groupName,
+            userEmail: chatId, // Pass groupId as email
+            currentUserEmail: _currentUserEmail!,
+            isGroup: true,
+          ),
         ),
-      ),
-    ).then((_) {
-      // When returning from chat, re-check unread status
-      setState(() {
-        _unreadChats.remove(userEmail);
+      ).then((_) {
+        setState(() {
+          _unreadChats.remove(chatId);
+        });
       });
-    });
+    } else {
+      final user = _firestoreUsers.firstWhere(
+        (u) => u['email'] == chatId,
+        orElse: () => {},
+      );
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => UserChatPage(
+            userName: user['name'] ?? chatId,
+            userEmail: chatId,
+            currentUserEmail: _currentUserEmail!,
+          ),
+        ),
+      ).then((_) {
+        // When returning from chat, re-check unread status
+        setState(() {
+          _unreadChats.remove(chatId);
+        });
+      });
+    }
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     _fetchFirestoreUsers();
+    _loadAllChatsForCurrentUser();
     _listenForChatUpdates();
   }
 
@@ -109,25 +177,33 @@ class _AddUserPageState extends State<AddUserPage> {
       if (currentUser == null) continue;
       // Cancel previous subscription if exists
       _chatSubscriptions[chatUserEmail]?.cancel();
-      _chatSubscriptions[chatUserEmail] = ChatService.chatStream(user1: currentUser, user2: chatUserEmail).listen((messages) {
-        if (messages.isNotEmpty) {
-          final lastMsg = messages.last;
-          final lastTimestamp = (lastMsg['timestamp'] ?? 0).toDouble();
-          final isFromOther = (lastMsg['sender'] as String).trim().toLowerCase() != currentUser.trim().toLowerCase();
-          setState(() {
-            _chatLastTimestamps[chatUserEmail] = lastTimestamp;
-            // Only mark as unread if the last message is from the other user and is new
-            if (isFromOther && (_unreadChats.contains(chatUserEmail) == false || _chatLastTimestamps[chatUserEmail] != lastTimestamp)) {
-              _unreadChats.add(chatUserEmail);
-            }
-            // Move chat to top if new message from other user
-            if (isFromOther) {
-              _users.remove(chatUserEmail);
-              _users.insert(0, chatUserEmail);
+      _chatSubscriptions[chatUserEmail] =
+          ChatService.chatStream(
+            user1: currentUser,
+            user2: chatUserEmail,
+          ).listen((messages) {
+            if (messages.isNotEmpty) {
+              final lastMsg = messages.last;
+              final lastTimestamp = (lastMsg['timestamp'] ?? 0).toDouble();
+              final isFromOther =
+                  (lastMsg['sender'] as String).trim().toLowerCase() !=
+                  currentUser.trim().toLowerCase();
+              setState(() {
+                _chatLastTimestamps[chatUserEmail] = lastTimestamp;
+                // Only mark as unread if the last message is from the other user and is new
+                if (isFromOther &&
+                    (_unreadChats.contains(chatUserEmail) == false ||
+                        _chatLastTimestamps[chatUserEmail] != lastTimestamp)) {
+                  _unreadChats.add(chatUserEmail);
+                }
+                // Move chat to top if new message from other user
+                if (isFromOther) {
+                  _users.remove(chatUserEmail);
+                  _users.insert(0, chatUserEmail);
+                }
+              });
             }
           });
-        }
-      });
     }
     // Remove unread status for chats that are no longer in the list
     setState(() {
@@ -137,8 +213,12 @@ class _AddUserPageState extends State<AddUserPage> {
 
   List<String> get _sortedUsers {
     // Separate users with and without messages
-    final usersWithMsg = _users.where((u) => (_chatLastTimestamps[u] ?? 0) > 0).toList();
-    final usersNoMsg = _users.where((u) => (_chatLastTimestamps[u] ?? 0) == 0).toList();
+    final usersWithMsg = _users
+        .where((u) => (_chatLastTimestamps[u] ?? 0) > 0)
+        .toList();
+    final usersNoMsg = _users
+        .where((u) => (_chatLastTimestamps[u] ?? 0) == 0)
+        .toList();
     // Sort users with messages by recency (descending)
     usersWithMsg.sort((a, b) {
       final aLastMsg = _chatLastTimestamps[a] ?? 0;
@@ -158,6 +238,11 @@ class _AddUserPageState extends State<AddUserPage> {
       ),
       builder: (context) {
         String? selectedUserEmail;
+        // Filter out users already in chat and current user
+        final availableUsers = _firestoreUsers.where((user) {
+          final email = user['email'];
+          return !_users.contains(email) && email != _currentUserEmail;
+        }).toList();
         return StatefulBuilder(
           builder: (context, setModalState) {
             return Padding(
@@ -177,7 +262,7 @@ class _AddUserPageState extends State<AddUserPage> {
                   const SizedBox(height: 18),
                   DropdownButtonFormField<String>(
                     value: selectedUserEmail,
-                    items: _firestoreUsers.map((user) {
+                    items: availableUsers.map((user) {
                       return DropdownMenuItem<String>(
                         value: user['email'],
                         child: Row(
@@ -186,8 +271,13 @@ class _AddUserPageState extends State<AddUserPage> {
                               backgroundColor: Colors.blueAccent.shade100,
                               radius: 14,
                               child: Text(
-                                user['name'].isNotEmpty ? user['name'][0].toUpperCase() : '?',
-                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                                user['name'].isNotEmpty
+                                    ? user['name'][0].toUpperCase()
+                                    : '?',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
                             ),
                             const SizedBox(width: 10),
@@ -217,18 +307,30 @@ class _AddUserPageState extends State<AddUserPage> {
                       ),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
-                        borderSide: const BorderSide(color: Colors.blueAccent, width: 1.5),
+                        borderSide: const BorderSide(
+                          color: Colors.blueAccent,
+                          width: 1.5,
+                        ),
                       ),
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
-                        borderSide: const BorderSide(color: Colors.blueAccent, width: 1.5),
+                        borderSide: const BorderSide(
+                          color: Colors.blueAccent,
+                          width: 1.5,
+                        ),
                       ),
                       filled: true,
                       fillColor: Colors.grey[850],
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
                     ),
                     dropdownColor: Colors.grey[850],
-                    icon: const Icon(Icons.arrow_drop_down, color: Colors.blueAccent),
+                    icon: const Icon(
+                      Icons.arrow_drop_down,
+                      color: Colors.blueAccent,
+                    ),
                   ),
                   const SizedBox(height: 24),
                   Align(
@@ -240,31 +342,40 @@ class _AddUserPageState extends State<AddUserPage> {
                           borderRadius: BorderRadius.circular(14),
                         ),
                         elevation: 4,
-                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 14,
+                        ),
                       ),
                       onPressed: () async {
                         if (selectedUserEmail == null) {
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Please select a user.')),
+                            const SnackBar(
+                              content: Text('Please select a user.'),
+                            ),
                           );
                           return;
                         }
-                        if (_users.contains(selectedUserEmail) || selectedUserEmail == _currentUserEmail) {
+                        // Prevent duplicate user chat
+                        if (_users.contains(selectedUserEmail) ||
+                            selectedUserEmail == _currentUserEmail) {
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('User already added or is you.')),
+                            const SnackBar(
+                              content: Text('User already added or is you.'),
+                            ),
                           );
                           return;
                         }
                         setState(() {
-                          _users.add(selectedUserEmail!);
+                          if (!_users.contains(selectedUserEmail!)) {
+                            _users.add(selectedUserEmail!);
+                          }
                         });
                         await _saveChatUsers();
                         Navigator.of(context).pop();
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('User added!'),
-                          ),
-                        );
+                        ScaffoldMessenger.of(
+                          context,
+                        ).showSnackBar(SnackBar(content: Text('User added!')));
                       },
                       child: const Text(
                         'Add',
@@ -286,6 +397,8 @@ class _AddUserPageState extends State<AddUserPage> {
 
   @override
   Widget build(BuildContext context) {
+    // Animation state for FAB
+
     return Scaffold(
       backgroundColor: const Color(0xFF181A20),
       body: Stack(
@@ -340,10 +453,25 @@ class _AddUserPageState extends State<AddUserPage> {
                         ),
                       ),
                       const Spacer(),
+                      // Add User Icon
                       IconButton(
-                        icon: const Icon(Icons.person_add_alt_1_rounded, color: Colors.blueAccent, size: 28),
+                        icon: const Icon(
+                          Icons.person_add_alt_1_rounded,
+                          color: Colors.blueAccent,
+                          size: 28,
+                        ),
                         onPressed: _showAddUserSheet,
                         tooltip: 'Add user to chat',
+                      ),
+                      // Create Group Icon (added next to Add User)
+                      IconButton(
+                        icon: const Icon(
+                          Icons.group_add_rounded,
+                          color: Colors.purpleAccent,
+                          size: 28,
+                        ),
+                        onPressed: () => _showCreateGroupDialog(context),
+                        tooltip: 'Create Group',
                       ),
                     ],
                   ),
@@ -377,24 +505,34 @@ class _AddUserPageState extends State<AddUserPage> {
                                 )
                               : ListView.separated(
                                   itemCount: _sortedUsers.length,
-                                  separatorBuilder: (_, __) => const SizedBox(height: 12),
+                                  separatorBuilder: (_, __) =>
+                                      const SizedBox(height: 12),
                                   itemBuilder: (context, index) {
                                     final chatUserEmail = _sortedUsers[index];
                                     final chatUser = _firestoreUsers.firstWhere(
                                       (u) => u['email'] == chatUserEmail,
                                       orElse: () => <String, dynamic>{},
                                     );
-                                    final isHighlighted = _unreadChats.contains(chatUserEmail);
+                                    final isHighlighted = _unreadChats.contains(
+                                      chatUserEmail,
+                                    );
                                     return AnimatedContainer(
-                                      duration: const Duration(milliseconds: 500),
+                                      duration: const Duration(
+                                        milliseconds: 500,
+                                      ),
                                       curve: Curves.easeInOut,
                                       decoration: BoxDecoration(
-                                        color: isHighlighted ? Colors.blueAccent.withOpacity(0.18) : Colors.grey[850],
+                                        color: isHighlighted
+                                            ? Colors.blueAccent.withOpacity(
+                                                0.18,
+                                              )
+                                            : Colors.grey[850],
                                         borderRadius: BorderRadius.circular(16),
                                         boxShadow: isHighlighted
                                             ? [
                                                 BoxShadow(
-                                                  color: Colors.blueAccent.withOpacity(0.18),
+                                                  color: Colors.blueAccent
+                                                      .withOpacity(0.18),
                                                   blurRadius: 12,
                                                   offset: const Offset(0, 2),
                                                 ),
@@ -405,10 +543,15 @@ class _AddUserPageState extends State<AddUserPage> {
                                         leading: Stack(
                                           children: [
                                             CircleAvatar(
-                                              backgroundColor: Colors.blueAccent,
+                                              backgroundColor:
+                                                  Colors.blueAccent,
                                               child: Text(
-                                                (chatUser['name'] ?? chatUserEmail).isNotEmpty
-                                                    ? (chatUser['name'] ?? chatUserEmail)[0].toUpperCase()
+                                                (chatUser['name'] ??
+                                                            chatUserEmail)
+                                                        .isNotEmpty
+                                                    ? (chatUser['name'] ??
+                                                              chatUserEmail)[0]
+                                                          .toUpperCase()
                                                     : '?',
                                                 style: const TextStyle(
                                                   color: Colors.white,
@@ -426,7 +569,10 @@ class _AddUserPageState extends State<AddUserPage> {
                                                   decoration: BoxDecoration(
                                                     color: Colors.blueAccent,
                                                     shape: BoxShape.circle,
-                                                    border: Border.all(color: Colors.white, width: 2),
+                                                    border: Border.all(
+                                                      color: Colors.white,
+                                                      width: 2,
+                                                    ),
                                                   ),
                                                 ),
                                               ),
@@ -451,9 +597,86 @@ class _AddUserPageState extends State<AddUserPage> {
                                             color: Colors.blueAccent,
                                             size: 22,
                                           ),
-                                          onPressed: () => _openChat(chatUserEmail),
+                                          onPressed: () =>
+                                              _openChat(chatUserEmail),
                                         ),
                                         onTap: () => _openChat(chatUserEmail),
+                                        onLongPress: () {
+                                          showDialog(
+                                            context: context,
+                                            builder: (ctx) => AlertDialog(
+                                              backgroundColor: Colors.grey[900],
+                                              title: const Text(
+                                                'Delete Chat',
+                                                style: TextStyle(
+                                                  color: Colors.white,
+                                                ),
+                                              ),
+                                              content: const Text(
+                                                'Are you sure you want to delete this chat?',
+                                                style: TextStyle(
+                                                  color: Colors.white70,
+                                                ),
+                                              ),
+                                              actions: [
+                                                TextButton(
+                                                  child: const Text(
+                                                    'Cancel',
+                                                    style: TextStyle(
+                                                      color: Colors.blueAccent,
+                                                    ),
+                                                  ),
+                                                  onPressed: () =>
+                                                      Navigator.of(ctx).pop(),
+                                                ),
+                                                ElevatedButton(
+                                                  style:
+                                                      ElevatedButton.styleFrom(
+                                                        backgroundColor:
+                                                            Colors.redAccent,
+                                                      ),
+                                                  child: const Text(
+                                                    'Delete',
+                                                    style: TextStyle(
+                                                      color: Colors.white,
+                                                    ),
+                                                  ),
+                                                  onPressed: () async {
+                                                    Navigator.of(ctx).pop();
+                                                    setState(() {
+                                                      _users.remove(
+                                                        chatUserEmail,
+                                                      );
+                                                    });
+                                                    await _saveChatUsers();
+                                                    if (_isGroupChat(
+                                                      chatUserEmail,
+                                                    )) {
+                                                      // Optionally delete group chat from Firestore
+                                                      await GroupChatService.deleteGroupChat(
+                                                        chatUserEmail,
+                                                      );
+                                                    } else {
+                                                      await ChatService.deleteUserChat(
+                                                        _currentUserEmail!,
+                                                        chatUserEmail,
+                                                      );
+                                                    }
+                                                    ScaffoldMessenger.of(
+                                                      context,
+                                                    ).showSnackBar(
+                                                      const SnackBar(
+                                                        content: Text(
+                                                          'Chat deleted!',
+                                                        ),
+                                                      ),
+                                                    );
+                                                  },
+                                                ),
+                                              ],
+                                            ),
+                                          );
+                                        },
                                       ),
                                     );
                                   },
@@ -466,888 +689,118 @@ class _AddUserPageState extends State<AddUserPage> {
               ],
             ),
           ),
+          // Floating Action Button for Add User / Create Group
         ],
       ),
     );
   }
-}
 
-class AnimatedCircle extends StatelessWidget {
-  final Color color;
-  final double size;
-  final int duration;
-
-  const AnimatedCircle({
-    super.key,
-    required this.color,
-    required this.size,
-    required this.duration,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedContainer(
-      duration: Duration(milliseconds: duration),
-      curve: Curves.easeInOut,
-      width: size,
-      height: size,
-      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-    );
-  }
-}
-
-class UserChatPage extends StatefulWidget {
-  final String userName;
-  final String userEmail;
-  final String currentUserEmail;
-  const UserChatPage({
-    super.key,
-    required this.userName,
-    required this.userEmail,
-    required this.currentUserEmail,
-  });
-
-  @override
-  State<UserChatPage> createState() => _UserChatPageState();
-}
-
-class _UserChatPageState extends State<UserChatPage> {
-  final TextEditingController _msgController = TextEditingController();
-  final ScrollController _scrollController = ScrollController();
-  String? _receiverName;
-  String? _senderName;
-  bool _isRecording = false;
-  // For image picker
-  String? _pickedImagePath;
-  List<Map<String, dynamic>> _lastChatMessages = [];
-
-  @override
-  void initState() {
-    super.initState();
-    _loadNames();
-  }
-
-  Future<void> _loadNames() async {
-    // Try to get both sender and receiver names from Firestore
-    final users = await ChatService.getAllUsers();
-    final sender = users.firstWhere(
-      (u) =>
-          (u['email'] as String).trim().toLowerCase() ==
-          widget.currentUserEmail.trim().toLowerCase(),
-      orElse: () => {'name': widget.currentUserEmail},
-    );
-    final receiver = users.firstWhere(
-      (u) =>
-          (u['email'] as String).trim().toLowerCase() ==
-          widget.userEmail.trim().toLowerCase(),
-      orElse: () => {'name': widget.userEmail},
-    );
-    setState(() {
-      _senderName = sender['name'] ?? widget.currentUserEmail;
-      _receiverName = receiver['name'] ?? widget.userEmail;
-    });
-  }
-
-  String _displayName(String? nameOrEmail) {
-    if (nameOrEmail == null) return '?';
-    if (nameOrEmail.contains('@')) {
-      // Convert email to username: before @, replace . with _, capitalize each part
-      final user = nameOrEmail.split('@')[0].replaceAll('.', '_');
-      return user
-          .split('_')
-          .map((s) => s.isNotEmpty ? s[0].toUpperCase() + s.substring(1) : '')
-          .join('_');
-    }
-    // Capitalize each word in name
-    return nameOrEmail
-        .split(' ')
-        .map((s) => s.isNotEmpty ? s[0].toUpperCase() + s.substring(1) : '')
-        .join(' ');
-  }
-
-  void _sendMessage() async {
-    final text = _msgController.text.trim();
-    if (text.isEmpty && _pickedImagePath == null) return;
-    final now = DateTime.now().millisecondsSinceEpoch / 1000.0;
-    String senderUsername = _displayName(_senderName);
-    String receiverUsername = _displayName(_receiverName);
-    try {
-      await ChatService.sendMessage(
-        sender: senderUsername,
-        receiver: receiverUsername,
-        text: text,
-        timestamp: now,
-        imagePath: _pickedImagePath, // Pass image path if present
-      );
-      _msgController.clear();
-      setState(() {
-        _pickedImagePath = null;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to send message: $e')));
-    }
-  }
-
-  void _pickImage() async {
-    // Use custom camera screen with back button
-    final imagePath = await Navigator.of(context).push<String>(
-      MaterialPageRoute(
-        builder: (context) => CameraScreen(
-          onImageCaptured: (path) {
-            Navigator.of(context).pop(path);
-          },
-        ),
-      ),
-    );
-    if (imagePath != null) {
-      setState(() {
-        _pickedImagePath = imagePath;
-      });
-    }
-  }
-
-  void _pickGalleryImage() async {
-    final picker = await ImagePicker().pickImage(source: ImageSource.gallery);
-    if (picker != null) {
-      setState(() {
-        _pickedImagePath = picker.path;
-      });
-    }
-  }
-
-  void _removePickedImage() {
-    setState(() {
-      _pickedImagePath = null;
-    });
-  }
-
-  void _toggleRecording() {
-    setState(() {
-      _isRecording = !_isRecording;
-    });
-    // Implement actual recording logic as needed
-  }
-
-  void _openProfile() {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => ChatProfilePage(
-          userName: widget.userName,
-          userEmail: widget.userEmail,
-          chatMessages: _lastChatMessages,
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final sender = widget.currentUserEmail.trim().toLowerCase();
-    final receiver = widget.userEmail.trim().toLowerCase();
-    final senderDisplay = _displayName(_senderName);
-    final receiverDisplay = _displayName(_receiverName);
-    return Scaffold(
-      backgroundColor: const Color(0xFF181A20),
-      body: Stack(
-        children: [
-          // Animated background
-          Positioned(
-            top: -100,
-            left: -100,
-            child: AnimatedCircle(
-              color: Colors.blueAccent.withAlpha(30),
-              size: 250,
-              duration: 3000,
-            ),
+  void _showCreateGroupDialog(BuildContext context) {
+    List<String> selectedEmails = [];
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: Colors.grey[900],
+          title: const Text(
+            'Create Group',
+            style: TextStyle(color: Colors.white),
           ),
-          Positioned(
-            bottom: -80,
-            right: -80,
-            child: AnimatedCircle(
-              color: Colors.purpleAccent.withAlpha(25),
-              size: 200,
-              duration: 4000,
-            ),
-          ),
-          SafeArea(
+          content: SizedBox(
+            width: 300,
             child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                // Top bar with back, avatar, name, call, video call
-                Padding(
-                  padding: const EdgeInsets.only(
-                    top: 18,
-                    left: 16,
-                    right: 16,
-                    bottom: 10,
-                  ),
-                  child: Row(
-                    children: [
-                      GestureDetector(
-                        onTap: () => Navigator.of(context).pop(),
-                        child: const Icon(
-                          Icons.arrow_back_ios_new_rounded,
-                          color: Colors.white,
-                          size: 22,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      GestureDetector(
-                        onTap: _openProfile,
-                        child: CircleAvatar(
-                          backgroundColor: Colors.blueAccent,
-                          child: Text(
-                            widget.userName.isNotEmpty
-                                ? widget.userName[0].toUpperCase()
-                                : '?',
-                            style: const TextStyle(color: Colors.white),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: GestureDetector(
-                          onTap: _openProfile,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                widget.userName,
-                                style: TextStyle(
-                                  color: Colors.blueAccent.shade100,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 18,
-                                  letterSpacing: 1.2,
-                                ),
-                              ),
-                              Text(
-                                widget.userEmail,
-                                style: const TextStyle(
-                                  color: Colors.white54,
-                                  fontSize: 13,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                      IconButton(
-                        icon: Container(
-                          decoration: BoxDecoration(
-                            color: Colors.greenAccent.withOpacity(0.18),
-                            borderRadius: BorderRadius.circular(
-                              10,
-                            ), // square with rounded corners
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.greenAccent.withOpacity(0.18),
-                                blurRadius: 8,
-                                offset: Offset(0, 2),
-                              ),
-                            ],
-                          ),
-                          padding: const EdgeInsets.all(8),
-                          child: const Icon(
-                            Icons.call_rounded,
-                            color: Colors.greenAccent,
-                            size: 28,
-                          ),
-                        ),
-                        onPressed: () {
-                          // Implement call logic
-                        },
-                        tooltip: 'Call',
-                      ),
-                      IconButton(
-                        icon: Container(
-                          decoration: BoxDecoration(
-                            color: Colors.purpleAccent.withOpacity(0.18),
-                            borderRadius: BorderRadius.circular(
-                              10,
-                            ), // square with rounded corners
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.purpleAccent.withOpacity(0.18),
-                                blurRadius: 8,
-                                offset: Offset(0, 2),
-                              ),
-                            ],
-                          ),
-                          padding: const EdgeInsets.all(8),
-                          child: const Icon(
-                            Icons.videocam_rounded,
-                            color: Colors.purpleAccent,
-                            size: 28,
-                          ),
-                        ),
-                        onPressed: () {
-                          // Implement video call logic
-                        },
-                        tooltip: 'Video Call',
-                      ),
-                    ],
-                  ),
+                const Text(
+                  'Select users to add to group:',
+                  style: TextStyle(color: Colors.white70),
                 ),
-                // Chat messages
-                Expanded(
-                  child: StreamBuilder<List<Map<String, dynamic>>>(
-                    stream: ChatService.chatStream(
-                      user1: sender,
-                      user2: receiver,
-                    ),
-                    builder: (context, snapshot) {
-                      if (snapshot.hasData) {
-                        _lastChatMessages = snapshot.data!;
-                      }
-                      if (snapshot.connectionState == ConnectionState.waiting) {
-                        return const Center(child: CircularProgressIndicator());
-                      }
-                      final messages = snapshot.data ?? [];
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        if (_scrollController.hasClients) {
-                          _scrollController.jumpTo(
-                            _scrollController.position.maxScrollExtent,
-                          );
-                        }
-                      });
-                      return ListView.builder(
-                        controller: _scrollController,
-                        padding: const EdgeInsets.symmetric(
-                          vertical: 16,
-                          horizontal: 12,
+                const SizedBox(height: 12),
+                SizedBox(
+                  height: 200,
+                  child: ListView(
+                    shrinkWrap: true,
+                    children: _firestoreUsers.map((user) {
+                      return CheckboxListTile(
+                        value: selectedEmails.contains(user['email']),
+                        title: Text(
+                          user['name'],
+                          style: const TextStyle(color: Colors.white),
                         ),
-                        itemCount: messages.length,
-                        itemBuilder: (context, index) {
-                          final msg = messages[index];
-                          final isMe =
-                              (msg['sender'] as String).trim() == senderDisplay;
-                          return Row(
-                            mainAxisAlignment: isMe
-                                ? MainAxisAlignment.end
-                                : MainAxisAlignment.start,
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              if (!isMe)
-                                Padding(
-                                  padding: const EdgeInsets.only(right: 8.0),
-                                  child: Column(
-                                    children: [
-                                      CircleAvatar(
-                                        radius: 14, // smaller
-                                        backgroundColor: Colors.blueAccent,
-                                        child: Text(
-                                          receiverDisplay.isNotEmpty
-                                              ? receiverDisplay[0]
-                                              : '?',
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 14,
-                                          ), // smaller
-                                        ),
-                                      ),
-                                      const SizedBox(height: 2),
-                                      Text(
-                                        receiverDisplay,
-                                        style: const TextStyle(
-                                          color: Colors.white54,
-                                          fontSize: 10,
-                                        ), // smaller
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              Flexible(
-                                child: Container(
-                                  margin: const EdgeInsets.symmetric(vertical: 4),
-                                  padding: EdgeInsets.zero,
-                                  decoration: BoxDecoration(
-                                    color: isMe
-                                        ? Colors.blueAccent.withOpacity(0.22) // lighter blue for sent
-                                        : Colors.grey[800], // darker grey for received
-                                    borderRadius: BorderRadius.only(
-                                      topLeft: const Radius.circular(16),
-                                      topRight: const Radius.circular(16),
-                                      bottomLeft: isMe
-                                          ? const Radius.circular(16)
-                                          : const Radius.circular(4),
-                                      bottomRight: isMe
-                                          ? const Radius.circular(4)
-                                          : const Radius.circular(16),
-                                    ),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black.withOpacity(0.10),
-                                        blurRadius: 6,
-                                        offset: const Offset(0, 2),
-                                      ),
-                                    ],
-                                  ),
-                                  child: Builder(
-                                    builder: (context) {
-                                      final hasImage = msg['image'] != null && (msg['image'] as String).isNotEmpty;
-                                      final hasText = (msg['text'] ?? '').toString().isNotEmpty;
-                                      if (hasImage) {
-                                        return _ImageWithAspect(
-                                          imagePath: msg['image'],
-                                          textWidget: hasText
-                                              ? Text(
-                                                  msg['text'] ?? '',
-                                                  style: const TextStyle(fontSize: 16),
-                                                )
-                                              : null,
-                                        );
-                                      } else if (hasText) {
-                                        return Padding(
-                                          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
-                                          child: Text(
-                                            msg['text'] ?? '',
-                                            style: const TextStyle(fontSize: 16, color: Colors.white),
-                                          ),
-                                        );
-                                      } else {
-                                        return const SizedBox.shrink();
-                                      }
-                                    },
-                                  ),
-                                ),
-                              ),
-                              if (isMe)
-                                Padding(
-                                  padding: const EdgeInsets.only(left: 8.0),
-                                  child: Column(
-                                    children: [
-                                      CircleAvatar(
-                                        radius: 14, // smaller
-                                        backgroundColor: Colors.blueAccent,
-                                        child: Text(
-                                          senderDisplay.isNotEmpty
-                                              ? senderDisplay[0]
-                                              : '?',
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 14,
-                                          ), // smaller
-                                        ),
-                                      ),
-                                      const SizedBox(height: 2),
-                                      Text(
-                                        senderDisplay,
-                                        style: const TextStyle(
-                                          color: Colors.white54,
-                                          fontSize: 10,
-                                        ), // smaller
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                            ],
-                          );
+                        subtitle: Text(
+                          user['email'],
+                          style: const TextStyle(color: Colors.white54),
+                        ),
+                        onChanged: (checked) {
+                          if (checked == true) {
+                            selectedEmails.add(user['email']);
+                          } else {
+                            selectedEmails.remove(user['email']);
+                          }
+                          (context as Element).markNeedsBuild();
                         },
+                        checkColor: Colors.white,
+                        activeColor: Colors.purpleAccent,
                       );
-                    },
-                  ),
-                ),
-                // Chat input bar with camera, gallery, mic, send
-                Padding(
-                  padding: const EdgeInsets.only(
-                    bottom: 10,
-                    left: 10,
-                    right: 10,
-                    top: 5,
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      // Camera icon
-                      Container(
-                        decoration: BoxDecoration(
-                          color: Colors.orangeAccent.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(
-                            10,
-                          ), // square with rounded corners
-                        ),
-                        child: IconButton(
-                          icon: const Icon(
-                            Icons.camera_alt_rounded,
-                            color: Colors.orangeAccent,
-                            size: 22,
-                          ),
-                          onPressed: _pickImage,
-                          tooltip: 'Camera',
-                        ),
-                      ),
-                      const SizedBox(width: 2),
-                      // Gallery icon
-                      Container(
-                        decoration: BoxDecoration(
-                          color: Colors.pinkAccent.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(
-                            10,
-                          ), // square with rounded corners
-                        ),
-                        child: IconButton(
-                          icon: const Icon(
-                            Icons.photo_library_rounded,
-                            color: Colors.pinkAccent,
-                            size: 22,
-                          ),
-                          onPressed: _pickGalleryImage,
-                          tooltip: 'Gallery',
-                        ),
-                      ),
-                      const SizedBox(width: 2),
-                      // Mic/Send icon
-                      Container(
-                        decoration: BoxDecoration(
-                          color:
-                              (_isRecording
-                                      ? Colors.greenAccent
-                                      : Colors.blueAccent)
-                                  .withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(
-                            10,
-                          ), // square with rounded corners
-                        ),
-                        child: IconButton(
-                          icon: Icon(
-                            _isRecording
-                                ? Icons.send_rounded
-                                : Icons.mic_rounded,
-                            color: _isRecording
-                                ? Colors.greenAccent
-                                : Colors.blueAccent,
-                            size: 22,
-                          ),
-                          onPressed: _toggleRecording,
-                          tooltip: _isRecording ? 'Send Voice' : 'Record',
-                        ),
-                      ),
-                      const SizedBox(width: 2),
-                      // Chat box
-                      Flexible(
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: Colors.grey[900],
-                            borderRadius: BorderRadius.circular(24),
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                if (_pickedImagePath != null)
-                                  Padding(
-                                    padding: const EdgeInsets.only(bottom: 4.0, top: 4.0),
-                                    child: Stack(
-                                      alignment: Alignment.topRight,
-                                      children: [
-                                        ClipRRect(
-                                          borderRadius: BorderRadius.circular(12),
-                                          child: Image.file(
-                                            File(_pickedImagePath!),
-                                            fit: BoxFit.contain,
-                                          ),
-                                        ),
-                                        Positioned(
-                                          top: 6,
-                                          right: 6,
-                                          child: GestureDetector(
-                                            onTap: _removePickedImage,
-                                            child: Container(
-                                              decoration: BoxDecoration(
-                                                color: Colors.black54,
-                                                shape: BoxShape.circle,
-                                              ),
-                                              child: const Icon(Icons.close, color: Colors.white, size: 18),
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                SizedBox(
-                                  height: 48, // Match icon button size
-                                  child: TextField(
-                                    controller: _msgController,
-                                    style: const TextStyle(color: Colors.white, fontSize: 16),
-                                    decoration: const InputDecoration(
-                                      hintText: 'Type a message...',
-                                      hintStyle: TextStyle(color: Colors.white54, fontSize: 15),
-                                      border: InputBorder.none,
-                                      contentPadding: EdgeInsets.symmetric(
-                                        horizontal: 12,
-                                        vertical: 10,
-                                      ),
-                                    ),
-                                    minLines: 1,
-                                    maxLines: 1,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(
-                          Icons.send_rounded,
-                          color: Colors.lightBlueAccent,
-                          size: 28,
-                        ),
-                        onPressed: _sendMessage,
-                        tooltip: 'Send',
-                      ),
-                    ],
+                    }).toList(),
                   ),
                 ),
               ],
             ),
           ),
-        ],
-      ),
-    );
-  }
-}
-
-class CameraScreen extends StatefulWidget {
-  final void Function(String? imagePath) onImageCaptured;
-  const CameraScreen({Key? key, required this.onImageCaptured})
-    : super(key: key);
-
-  @override
-  State<CameraScreen> createState() => _CameraScreenState();
-}
-
-class _CameraScreenState extends State<CameraScreen> {
-  CameraController? _controller;
-  List<CameraDescription>? _cameras;
-  bool _isReady = false;
-  bool _isTakingPicture = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _initCamera();
-  }
-
-  Future<void> _initCamera() async {
-    _cameras = await availableCameras();
-    if (_cameras != null && _cameras!.isNotEmpty) {
-      _controller = CameraController(_cameras![0], ResolutionPreset.medium);
-      await _controller!.initialize();
-      setState(() {
-        _isReady = true;
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller?.dispose();
-    super.dispose();
-  }
-
-  Future<void> _takePicture() async {
-    if (_controller == null ||
-        !_controller!.value.isInitialized ||
-        _isTakingPicture)
-      return;
-    setState(() => _isTakingPicture = true);
-    try {
-      final XFile file = await _controller!.takePicture();
-      widget.onImageCaptured(file.path);
-      Navigator.of(context).pop();
-    } catch (_) {
-      setState(() => _isTakingPicture = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          if (_isReady && _controller != null)
-            Center(child: CameraPreview(_controller!)),
-          Positioned(
-            top: 40,
-            left: 20,
-            child: IconButton(
-              icon: Icon(
-                Icons.arrow_back_ios_new_rounded,
-                color: Colors.white,
-                size: 32,
-              ),
-              onPressed: () {
-                widget.onImageCaptured(null); // Cancel
-                Navigator.of(context).pop();
-              },
-            ),
-          ),
-          if (_isReady)
-            Align(
-              alignment: Alignment.bottomCenter,
-              child: Padding(
-                padding: const EdgeInsets.only(bottom: 40),
-                child: FloatingActionButton(
-                  backgroundColor: Colors.white,
-                  child: Icon(
-                    Icons.camera_alt_rounded,
-                    color: Colors.black,
-                    size: 32,
-                  ),
-                  onPressed: _takePicture,
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ZoomableImageDialog extends StatefulWidget {
-  final String imgPath;
-  const _ZoomableImageDialog({required this.imgPath});
-
-  @override
-  State<_ZoomableImageDialog> createState() => _ZoomableImageDialogState();
-}
-
-class _ZoomableImageDialogState extends State<_ZoomableImageDialog> {
-  double _scale = 1.0;
-
-  void _handleDoubleTap() {
-    setState(() {
-      if (_scale > 1.1) {
-        _scale = 1.0;
-      } else {
-        _scale = 2.5;
-      }
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Dialog(
-      backgroundColor: Colors.black,
-      insetPadding: const EdgeInsets.all(0),
-      child: Stack(
-        children: [
-          GestureDetector(
-            onDoubleTap: _handleDoubleTap,
-            child: Center(
-              child: InteractiveViewer(
-                minScale: 1.0,
-                maxScale: 4.0,
-                scaleEnabled: true,
-                panEnabled: true,
-                child: AnimatedScale(
-                  scale: _scale,
-                  duration: const Duration(milliseconds: 200),
-                  child: AspectRatio(
-                    aspectRatio: 1.0,
-                    child: Image.file(
-                      File(widget.imgPath),
-                      fit: BoxFit.contain,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          Positioned(
-            bottom: 32,
-            left: 32,
-            child: FloatingActionButton(
-              backgroundColor: Colors.blueAccent,
-              heroTag: 'download_chat',
-              onPressed: () async {
-                // TODO: Implement download logic
-                Navigator.of(context).pop();
-              },
-              child: const Icon(Icons.download_rounded, color: Colors.white, size: 28),
-            ),
-          ),
-          Positioned(
-            bottom: 32,
-            right: 32,
-            child: FloatingActionButton(
-              backgroundColor: Colors.redAccent,
-              heroTag: 'close_chat',
+          actions: [
+            TextButton(
               onPressed: () => Navigator.of(context).pop(),
-              child: const Icon(Icons.close, color: Colors.white, size: 28),
+              child: const Text(
+                'Cancel',
+                style: TextStyle(color: Colors.blueAccent),
+              ),
             ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ImageWithAspect extends StatelessWidget {
-  final String imagePath;
-  final Widget? textWidget;
-  const _ImageWithAspect({required this.imagePath, this.textWidget});
-
-  @override
-  Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final imgWidth = screenWidth * 0.5; // half screen width
-    return FutureBuilder<Size>(
-      future: _getImageSize(imagePath),
-      builder: (context, snapshot) {
-        final size = snapshot.data ?? const Size(120,120);
-        final aspectRatio = size.width / size.height;
-        final imgHeight = imgWidth / aspectRatio;
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            GestureDetector(
-              onTap: () {
-                showDialog(
-                  context: context,
-                  builder: (context) {
-                    return _ZoomableImageDialog(imgPath: imagePath);
-                  },
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.purpleAccent,
+              ),
+              onPressed: () async {
+                if (selectedEmails.isEmpty || _currentUserEmail == null) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Select at least one user.')),
+                  );
+                  return;
+                }
+                final groupUsers = [_currentUserEmail!, ...selectedEmails];
+                groupUsers.sort();
+                // Save group in Firestore
+                await GroupChatService.createGroupChat(groupUsers);
+                // Save group locally for all members
+                final groupId = await GroupChatService.getGroupChatId(
+                  groupUsers,
                 );
+                for (final email in groupUsers) {
+                  final prefs = await SharedPreferences.getInstance();
+                  final userChats =
+                      prefs.getStringList('chat_users_$email') ?? [];
+                  if (!userChats.contains(groupId)) {
+                    userChats.add(groupId);
+                    await prefs.setStringList('chat_users_$email', userChats);
+                  }
+                }
+                setState(() {
+                  _users.add(groupId);
+                });
+                await _saveChatUsers();
+                Navigator.of(context).pop();
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(SnackBar(content: Text('Group created!')));
               },
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(16), // Match chat bubble radius
-                child: Image.file(
-                  File(imagePath),
-                  width: imgWidth,
-                  height: imgHeight,
-                  fit: BoxFit.contain,
-                ),
+              child: const Text(
+                'Create',
+                style: TextStyle(color: Colors.white),
               ),
             ),
-            if (textWidget != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 12, left: 12, right: 12, bottom: 8), // More space like other chats
-                child: DefaultTextStyle.merge(
-                  style: TextStyle(
-                    fontSize: imgWidth * 0.08,
-                    color: Colors.white,
-                  ),
-                  child: textWidget!,
-                ),
-              ),
           ],
         );
       },
     );
-  }
-
-  Future<Size> _getImageSize(String path) async {
-    final file = File(path);
-    final bytes = await file.readAsBytes();
-    final image = await decodeImageFromList(bytes);
-    return Size(image.width.toDouble(), image.height.toDouble());
   }
 }

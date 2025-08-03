@@ -1,6 +1,9 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'dart:io';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 
 class ChatService {
   static const String baseUrl = 'http://localhost:8000'; // Change if needed
@@ -16,12 +19,19 @@ class ChatService {
       final name = users.docs.first.data()['name'] ?? '';
       if (name.isNotEmpty) {
         // Remove spaces, capitalize each word, join with _
-        return name.trim().split(RegExp(r'\s+')).map((s) => s.isNotEmpty ? s[0].toUpperCase() + s.substring(1) : '').join('_');
+        return name
+            .trim()
+            .split(RegExp(r'\s+'))
+            .map((s) => s.isNotEmpty ? s[0].toUpperCase() + s.substring(1) : '')
+            .join('_');
       }
     }
     // Fallback: use email before @, replace . and - with _, capitalize
     final user = email.split('@')[0].replaceAll(RegExp(r'[.\-]'), '_');
-    return user.split('_').map((s) => s.isNotEmpty ? s[0].toUpperCase() + s.substring(1) : '').join('_');
+    return user
+        .split('_')
+        .map((s) => s.isNotEmpty ? s[0].toUpperCase() + s.substring(1) : '')
+        .join('_');
   }
 
   static Future<String> getChatIdByUsernames(String user1, String user2) async {
@@ -191,5 +201,49 @@ class ChatService {
       final data = doc.data();
       return {'name': data['name'] ?? '', 'email': data['email'] ?? ''};
     }).toList();
+  }
+
+  static Future<String?> uploadImageAndGetUrl(String filePath) async {
+    // Replace with your Imgur Client ID
+    const clientId = 'YOUR_IMGUR_CLIENT_ID';
+    final file = File(filePath);
+    if (!await file.exists()) {
+      print('File does not exist: ' + filePath);
+      return null;
+    }
+    final bytes = await file.readAsBytes();
+    final base64Image = base64Encode(bytes);
+    final url = Uri.parse('https://api.imgur.com/3/image');
+    try {
+      final response = await http.post(
+        url,
+        headers: {'Authorization': 'Client-ID $clientId'},
+        body: {'image': base64Image},
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final imageUrl = data['data']['link'];
+        print('Imgur upload success: $imageUrl');
+        return imageUrl;
+      } else {
+        print('Imgur upload failed: ${response.statusCode} ${response.body}');
+        return null;
+      }
+    } catch (e, stack) {
+      print('Imgur upload error:');
+      print(e);
+      print(stack);
+      return null;
+    }
+  }
+
+  static Future<void> deleteUserChat(String user1, String user2) async {
+    final chatId = await getChatIdByUsernames(user1, user2);
+    await FirebaseFirestore.instance.collection('chats').doc(chatId).delete();
+  }
+
+  static Future<List<String>> getChatDocumentIds() async {
+    final snapshot = await FirebaseFirestore.instance.collection('chats').get();
+    return snapshot.docs.map((doc) => doc.id).toList();
   }
 }
