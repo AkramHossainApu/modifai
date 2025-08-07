@@ -5,6 +5,7 @@ import '../services/group_chat_service.dart';
 import 'user_chat_page.dart';
 import 'animated_circle.dart';
 import 'dart:async';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class AddUserPage extends StatefulWidget {
   const AddUserPage({super.key});
@@ -117,35 +118,53 @@ class _AddUserPageState extends State<AddUserPage> {
     return nameList.join(', ');
   }
 
+  // Helper to get group name and image from Firestore for group chats
+  Future<Map<String, dynamic>> _getGroupInfo(String groupId) async {
+    final doc = await FirebaseFirestore.instance.collection('group_chats').doc(groupId).get();
+    if (doc.exists) {
+      final data = doc.data() ?? {};
+      return {
+        'name': data['name'] ?? await _getGroupName(groupId),
+        'image': data['image'],
+      };
+    }
+    return {'name': await _getGroupName(groupId), 'image': null};
+  }
+
   void _openChat(String chatId) async {
     if (_currentUserEmail == null) return;
     setState(() {
       _unreadChats.remove(chatId);
     });
     if (_isGroupChat(chatId)) {
-      // Open group chat
-      final groupName = await _getGroupName(chatId);
-      Navigator.push(
+      // Fetch group info (name, image) from Firestore
+      final groupInfo = await _getGroupInfo(chatId);
+      final result = await Navigator.push(
         context,
         MaterialPageRoute(
           builder: (context) => UserChatPage(
-            userName: groupName,
+            userName: groupInfo['name'] ?? chatId,
             userEmail: chatId, // Pass groupId as email
             currentUserEmail: _currentUserEmail!,
             isGroup: true,
           ),
         ),
-      ).then((_) {
+      );
+      // If group info was updated, refresh home page
+      if (result != null && mounted) {
+        await _loadAllChatsForCurrentUser();
+        setState(() {});
+      } else {
         setState(() {
           _unreadChats.remove(chatId);
         });
-      });
+      }
     } else {
       final user = _firestoreUsers.firstWhere(
         (u) => u['email'] == chatId,
         orElse: () => {},
       );
-      Navigator.push(
+      await Navigator.push(
         context,
         MaterialPageRoute(
           builder: (context) => UserChatPage(
@@ -154,11 +173,10 @@ class _AddUserPageState extends State<AddUserPage> {
             currentUserEmail: _currentUserEmail!,
           ),
         ),
-      ).then((_) {
-        // When returning from chat, re-check unread status
-        setState(() {
-          _unreadChats.remove(chatId);
-        });
+      );
+      // When returning from chat, re-check unread status
+      setState(() {
+        _unreadChats.remove(chatId);
       });
     }
   }
@@ -508,177 +526,243 @@ class _AddUserPageState extends State<AddUserPage> {
                                   separatorBuilder: (_, __) =>
                                       const SizedBox(height: 12),
                                   itemBuilder: (context, index) {
-                                    final chatUserEmail = _sortedUsers[index];
-                                    final chatUser = _firestoreUsers.firstWhere(
-                                      (u) => u['email'] == chatUserEmail,
-                                      orElse: () => <String, dynamic>{},
-                                    );
-                                    final isHighlighted = _unreadChats.contains(
-                                      chatUserEmail,
-                                    );
-                                    return AnimatedContainer(
-                                      duration: const Duration(
-                                        milliseconds: 500,
-                                      ),
-                                      curve: Curves.easeInOut,
-                                      decoration: BoxDecoration(
-                                        color: isHighlighted
-                                            ? Colors.blueAccent.withOpacity(
-                                                0.18,
-                                              )
-                                            : Colors.grey[850],
-                                        borderRadius: BorderRadius.circular(16),
-                                        boxShadow: isHighlighted
-                                            ? [
-                                                BoxShadow(
-                                                  color: Colors.blueAccent
-                                                      .withOpacity(0.18),
-                                                  blurRadius: 12,
-                                                  offset: const Offset(0, 2),
-                                                ),
-                                              ]
-                                            : [],
-                                      ),
-                                      child: ListTile(
-                                        leading: Stack(
-                                          children: [
-                                            CircleAvatar(
-                                              backgroundColor:
-                                                  Colors.blueAccent,
-                                              child: Text(
-                                                (chatUser['name'] ??
-                                                            chatUserEmail)
-                                                        .isNotEmpty
-                                                    ? (chatUser['name'] ??
-                                                              chatUserEmail)[0]
-                                                          .toUpperCase()
-                                                    : '?',
-                                                style: const TextStyle(
-                                                  color: Colors.white,
-                                                  fontWeight: FontWeight.bold,
-                                                ),
-                                              ),
+                                    final chatId = _sortedUsers[index];
+                                    final isGroup = _isGroupChat(chatId);
+                                    final isHighlighted = _unreadChats.contains(chatId);
+                                    if (isGroup) {
+                                      return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                                        stream: FirebaseFirestore.instance
+                                            .collection('group_chats')
+                                            .doc(chatId)
+                                            .snapshots(),
+                                        builder: (context, snapshot) {
+                                          final data = snapshot.data?.data() ?? {};
+                                          final groupName = data['name'] ?? chatId;
+                                          final groupImage = data['image'];
+                                          return AnimatedContainer(
+                                            duration: const Duration(milliseconds: 500),
+                                            curve: Curves.easeInOut,
+                                            decoration: BoxDecoration(
+                                              color: isHighlighted
+                                                  ? Colors.blueAccent.withOpacity(0.18)
+                                                  : Colors.grey[850],
+                                              borderRadius: BorderRadius.circular(16),
+                                              boxShadow: isHighlighted
+                                                  ? [
+                                                      BoxShadow(
+                                                        color: Colors.blueAccent.withOpacity(0.18),
+                                                        blurRadius: 12,
+                                                        offset: const Offset(0, 2),
+                                                      ),
+                                                    ]
+                                                  : [],
                                             ),
-                                            if (isHighlighted)
-                                              Positioned(
-                                                right: 0,
-                                                bottom: 0,
-                                                child: Container(
-                                                  width: 12,
-                                                  height: 12,
-                                                  decoration: BoxDecoration(
-                                                    color: Colors.blueAccent,
-                                                    shape: BoxShape.circle,
-                                                    border: Border.all(
-                                                      color: Colors.white,
-                                                      width: 2,
-                                                    ),
-                                                  ),
-                                                ),
-                                              ),
-                                          ],
-                                        ),
-                                        title: Text(
-                                          chatUser['name'] ?? chatUserEmail,
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                        subtitle: Text(
-                                          chatUserEmail,
-                                          style: const TextStyle(
-                                            color: Colors.white54,
-                                          ),
-                                        ),
-                                        trailing: IconButton(
-                                          icon: const Icon(
-                                            Icons.chat_bubble_outline,
-                                            color: Colors.blueAccent,
-                                            size: 22,
-                                          ),
-                                          onPressed: () =>
-                                              _openChat(chatUserEmail),
-                                        ),
-                                        onTap: () => _openChat(chatUserEmail),
-                                        onLongPress: () {
-                                          showDialog(
-                                            context: context,
-                                            builder: (ctx) => AlertDialog(
-                                              backgroundColor: Colors.grey[900],
-                                              title: const Text(
-                                                'Delete Chat',
-                                                style: TextStyle(
-                                                  color: Colors.white,
-                                                ),
-                                              ),
-                                              content: const Text(
-                                                'Are you sure you want to delete this chat?',
-                                                style: TextStyle(
-                                                  color: Colors.white70,
-                                                ),
-                                              ),
-                                              actions: [
-                                                TextButton(
-                                                  child: const Text(
-                                                    'Cancel',
-                                                    style: TextStyle(
-                                                      color: Colors.blueAccent,
-                                                    ),
-                                                  ),
-                                                  onPressed: () =>
-                                                      Navigator.of(ctx).pop(),
-                                                ),
-                                                ElevatedButton(
-                                                  style:
-                                                      ElevatedButton.styleFrom(
-                                                        backgroundColor:
-                                                            Colors.redAccent,
-                                                      ),
-                                                  child: const Text(
-                                                    'Delete',
-                                                    style: TextStyle(
-                                                      color: Colors.white,
-                                                    ),
-                                                  ),
-                                                  onPressed: () async {
-                                                    Navigator.of(ctx).pop();
-                                                    setState(() {
-                                                      _users.remove(
-                                                        chatUserEmail,
-                                                      );
-                                                    });
-                                                    await _saveChatUsers();
-                                                    if (_isGroupChat(
-                                                      chatUserEmail,
-                                                    )) {
-                                                      // Optionally delete group chat from Firestore
-                                                      await GroupChatService.deleteGroupChat(
-                                                        chatUserEmail,
-                                                      );
-                                                    } else {
-                                                      await ChatService.deleteUserChat(
-                                                        _currentUserEmail!,
-                                                        chatUserEmail,
-                                                      );
-                                                    }
-                                                    ScaffoldMessenger.of(
-                                                      context,
-                                                    ).showSnackBar(
-                                                      const SnackBar(
-                                                        content: Text(
-                                                          'Chat deleted!',
-                                                        ),
-                                                      ),
-                                                    );
-                                                  },
-                                                ),
-                                              ],
+                                            child: ListTile(
+                                              leading: groupImage != null
+                                                  ? CircleAvatar(backgroundImage: NetworkImage(groupImage), radius: 24)
+                                                  : CircleAvatar(backgroundColor: Colors.blueAccent, radius: 24, child: Text(groupName.isNotEmpty ? groupName[0].toUpperCase() : '?', style: const TextStyle(color: Colors.white))),
+                                              title: Text(groupName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                                              subtitle: Text(chatId, style: const TextStyle(color: Colors.white54)),
+                                              onTap: () => _openChat(chatId),
                                             ),
                                           );
                                         },
-                                      ),
-                                    );
+                                      );
+                                    } else {
+                                      final chatUserEmail = _sortedUsers[index];
+                                      final chatUser = _firestoreUsers.firstWhere(
+                                        (u) => u['email'] == chatUserEmail,
+                                        orElse: () => <String, dynamic>{},
+                                      );
+                                      final isHighlighted = _unreadChats.contains(
+                                        chatUserEmail,
+                                      );
+                                      return AnimatedContainer(
+                                        duration: const Duration(
+                                          milliseconds: 500,
+                                        ),
+                                        curve: Curves.easeInOut,
+                                        decoration: BoxDecoration(
+                                          color: isHighlighted
+                                              ? Colors.blueAccent.withOpacity(
+                                                  0.18,
+                                                )
+                                              : Colors.grey[850],
+                                          borderRadius: BorderRadius.circular(16),
+                                          boxShadow: isHighlighted
+                                              ? [
+                                                  BoxShadow(
+                                                    color: Colors.blueAccent
+                                                        .withOpacity(0.18),
+                                                    blurRadius: 12,
+                                                    offset: const Offset(0, 2),
+                                                  ),
+                                                ]
+                                              : [],
+                                        ),
+                                        child: ListTile(
+                                          leading: Stack(
+                                            children: [
+                                              CircleAvatar(
+                                                backgroundColor:
+                                                    Colors.blueAccent,
+                                                child: Text(
+                                                  (chatUser['name'] ??
+                                                              chatUserEmail)
+                                                          .isNotEmpty
+                                                      ? (chatUser['name'] ??
+                                                                chatUserEmail)[0]
+                                                          .toUpperCase()
+                                                      : '?',
+                                                  style: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontWeight: FontWeight.bold,
+                                                  ),
+                                                ),
+                                              ),
+                                              if (isHighlighted)
+                                                Positioned(
+                                                  right: 0,
+                                                  bottom: 0,
+                                                  child: Container(
+                                                    width: 12,
+                                                    height: 12,
+                                                    decoration: BoxDecoration(
+                                                      color: Colors.blueAccent,
+                                                      shape: BoxShape.circle,
+                                                      border: Border.all(
+                                                        color: Colors.white,
+                                                        width: 2,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
+                                            ],
+                                          ),
+                                          title: Text(
+                                            chatUser['name'] ?? chatUserEmail,
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                          subtitle: Text(
+                                            chatUserEmail,
+                                            style: const TextStyle(
+                                              color: Colors.white54,
+                                            ),
+                                          ),
+                                          trailing: IconButton(
+                                            icon: const Icon(
+                                              Icons.chat_bubble_outline,
+                                              color: Colors.blueAccent,
+                                              size: 22,
+                                            ),
+                                            onPressed: () =>
+                                                _openChat(chatUserEmail),
+                                          ),
+                                          onTap: () => _openChat(chatUserEmail),
+                                          onLongPress: () {
+                                            showDialog(
+                                              context: context,
+                                              builder: (ctx) => AlertDialog(
+                                                backgroundColor: Colors.grey[900],
+                                                title: const Text(
+                                                  'Delete Chat',
+                                                  style: TextStyle(
+                                                    color: Colors.white,
+                                                  ),
+                                                ),
+                                                content: const Text(
+                                                  'Are you sure you want to delete this chat?',
+                                                  style: TextStyle(
+                                                    color: Colors.white70,
+                                                  ),
+                                                ),
+                                                actions: [
+                                                  TextButton(
+                                                    child: const Text(
+                                                      'Cancel',
+                                                      style: TextStyle(
+                                                        color: Colors.blueAccent,
+                                                      ),
+                                                    ),
+                                                    onPressed: () =>
+                                                        Navigator.of(ctx).pop(),
+                                                  ),
+                                                  ElevatedButton(
+                                                    style:
+                                                        ElevatedButton.styleFrom(
+                                                          backgroundColor:
+                                                              Colors.redAccent,
+                                                        ),
+                                                    child: const Text(
+                                                      'Delete',
+                                                      style: TextStyle(
+                                                        color: Colors.white,
+                                                      ),
+                                                    ),
+                                                    onPressed: () async {
+                                                      Navigator.of(ctx).pop();
+                                                      setState(() {
+                                                        _users.remove(
+                                                          chatUserEmail,
+                                                        );
+                                                      });
+                                                      await _saveChatUsers();
+                                                      if (_isGroupChat(
+                                                        chatUserEmail,
+                                                      )) {
+                                                        // Delete group chat document from Firestore
+                                                        await FirebaseFirestore.instance
+                                                            .collection('group_chats')
+                                                            .doc(chatUserEmail)
+                                                            .delete();
+                                                        // Optionally: delete all group messages subcollection
+                                                        final messages = await FirebaseFirestore.instance
+                                                            .collection('group_chats')
+                                                            .doc(chatUserEmail)
+                                                            .collection('messages')
+                                                            .get();
+                                                        for (final doc in messages.docs) {
+                                                          await doc.reference.delete();
+                                                        }
+                                                      } else {
+                                                        // Delete user-to-user chat document and all messages from Firestore
+                                                        final chatId = await ChatService.getChatIdByUsernames(_currentUserEmail!, chatUserEmail);
+                                                        // Delete all messages in the chat
+                                                        final messages = await FirebaseFirestore.instance
+                                                            .collection('chats')
+                                                            .doc(chatId)
+                                                            .collection('messages')
+                                                            .get();
+                                                        for (final doc in messages.docs) {
+                                                          await doc.reference.delete();
+                                                        }
+                                                        // Delete the chat document itself
+                                                        await FirebaseFirestore.instance
+                                                            .collection('chats')
+                                                            .doc(chatId)
+                                                            .delete();
+                                                      }
+                                                      ScaffoldMessenger.of(
+                                                        context,
+                                                      ).showSnackBar(
+                                                        const SnackBar(
+                                                          content: Text(
+                                                            'Chat deleted!',
+                                                          ),
+                                                        ),
+                                                      );
+                                                    },
+                                                  ),
+                                                ],
+                                              ),
+                                            );
+                                          },
+                                        ),
+                                      );
+                                    }
                                   },
                                 ),
                         ),

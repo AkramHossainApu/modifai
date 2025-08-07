@@ -9,3 +9,5 @@ numpy
 google-generativeai
 huggingface_hub
 tiktoken
+accelerate
+python-multipart

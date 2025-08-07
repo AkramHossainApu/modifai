@@ -47,8 +47,9 @@ class ChatService {
     required String text,
     required double timestamp,
     String? imagePath, // Optional image path
+    String? chatIdOverride, // NEW: allow explicit chatId
   }) async {
-    final chatId = await getChatIdByUsernames(sender, receiver);
+    final chatId = chatIdOverride ?? await getChatIdByUsernames(sender, receiver);
     final messageData = {
       'sender': sender,
       'receiver': receiver,
@@ -246,4 +247,18 @@ class ChatService {
     final snapshot = await FirebaseFirestore.instance.collection('chats').get();
     return snapshot.docs.map((doc) => doc.id).toList();
   }
+
+  /// Returns the user-to-user chatId for two users, regardless of sender/receiver order.
+  static Future<String> getUserToUserChatId(String user1, String user2) async {
+    return await getChatIdByUsernames(user1, user2);
+  }
+
+  /// Usage for AI response:
+  /// await ChatService.sendMessage(
+  ///   sender: 'ModifAI',
+  ///   receiver: chatId, // e.g. "User1_User2"
+  ///   text: aiReply,
+  ///   timestamp: ...,
+  ///   chatIdOverride: chatId,
+  /// );
 }

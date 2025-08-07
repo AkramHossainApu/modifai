@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'dart:io';
+import 'package:image_picker/image_picker.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import '../services/chat_service.dart';
 
-class ChatProfilePage extends StatelessWidget {
+class ChatProfilePage extends StatefulWidget {
   final String userName;
   final String userEmail;
   final List<Map<String, dynamic>> chatMessages;
@@ -13,42 +16,151 @@ class ChatProfilePage extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    final images = chatMessages.where((msg) => msg['image'] != null && (msg['image'] as String).isNotEmpty).toList();
-    final links = chatMessages.where((msg) => msg['text'] != null && _isLink(msg['text'])).toList();
-    final files = chatMessages.where((msg) => msg['file'] != null && (msg['file'] as String).isNotEmpty).toList();
+  State<ChatProfilePage> createState() => _ChatProfilePageState();
+}
 
+class _ChatProfilePageState extends State<ChatProfilePage> {
+  String? _groupName;
+  String? _groupImage;
+
+  @override
+  void initState() {
+    super.initState();
+    _groupName = widget.userName;
+    _fetchGroupInfo();
+  }
+
+  Future<void> _fetchGroupInfo() async {
+    final isGroup = widget.userEmail.split('_').length > 2;
+    if (isGroup) {
+      final doc = await FirebaseFirestore.instance.collection('group_chats').doc(widget.userEmail).get();
+      if (doc.exists) {
+        final data = doc.data() ?? {};
+        setState(() {
+          _groupName = data['name'] ?? widget.userName;
+          _groupImage = data['image'];
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bool isGroup = widget.userEmail.split('_').length > 2;
     return Scaffold(
       backgroundColor: const Color(0xFF181A20),
-      appBar: AppBar(
-        backgroundColor: Colors.blueAccent.shade100,
-        elevation: 0,
-        title: Text('$userName Profile', style: const TextStyle(color: Colors.white)),
-        iconTheme: const IconThemeData(color: Colors.white),
-      ),
+      appBar: isGroup
+          ? PreferredSize(
+              preferredSize: const Size.fromHeight(56),
+              child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                stream: FirebaseFirestore.instance
+                    .collection('group_chats')
+                    .doc(widget.userEmail)
+                    .snapshots(),
+                builder: (context, snapshot) {
+                  final data = snapshot.data?.data() ?? {};
+                  final groupName = data['name'] ?? widget.userName;
+                  return AppBar(
+                    backgroundColor: Colors.blueAccent.shade100,
+                    elevation: 0,
+                    title: Text('$groupName Profile', style: const TextStyle(color: Colors.white)),
+                    iconTheme: const IconThemeData(color: Colors.white),
+                    actions: [
+                      if (isGroup && (widget.userEmail.toLowerCase().contains('akram') || widget.userEmail.toLowerCase().contains('faysal') || widget.userEmail.toLowerCase().contains('tasha')))
+                        IconButton(
+                          icon: const Icon(Icons.edit, color: Colors.white),
+                          tooltip: 'Edit Group Name & Image',
+                          onPressed: () async {
+                            final result = await showDialog(
+                              context: context,
+                              builder: (ctx) => _EditGroupDialog(
+                                groupId: widget.userEmail,
+                                currentName: groupName,
+                              ),
+                            );
+                            if (result != null && result is Map) {
+                              await _fetchGroupInfo();
+                              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Group info updated!')));
+                            }
+                          },
+                        ),
+                    ],
+                  );
+                },
+              ),
+            )
+          : AppBar(
+              backgroundColor: Colors.blueAccent.shade100,
+              elevation: 0,
+              title: Text('${widget.userName} Profile', style: const TextStyle(color: Colors.white)),
+              iconTheme: const IconThemeData(color: Colors.white),
+            ),
       body: ListView(
         padding: const EdgeInsets.all(22),
         children: [
-          // Profile header
           Row(
             children: [
-              CircleAvatar(
-                backgroundColor: Colors.blueAccent,
-                radius: 32,
-                child: Text(
-                  userName.isNotEmpty ? userName[0].toUpperCase() : '?',
-                  style: const TextStyle(color: Colors.white, fontSize: 28),
-                ),
-              ),
+              isGroup
+                  ? StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                      stream: FirebaseFirestore.instance
+                          .collection('group_chats')
+                          .doc(widget.userEmail)
+                          .snapshots(),
+                      builder: (context, snapshot) {
+                        final data = snapshot.data?.data() ?? {};
+                        final groupName = data['name'] ?? widget.userName;
+                        final groupImage = data['image'];
+                        final hasImage = groupImage != null && groupImage.isNotEmpty;
+                        return hasImage
+                            ? CircleAvatar(
+                                backgroundImage: NetworkImage(groupImage),
+                                radius: 32,
+                              )
+                            : CircleAvatar(
+                                backgroundColor: Colors.blueAccent,
+                                radius: 32,
+                                child: Text(
+                                  groupName.isNotEmpty ? groupName[0].toUpperCase() : '?',
+                                  style: const TextStyle(color: Colors.white, fontSize: 28),
+                                ),
+                              );
+                      },
+                    )
+                  : CircleAvatar(
+                      backgroundColor: Colors.blueAccent,
+                      radius: 32,
+                      child: Text(
+                        widget.userName.isNotEmpty ? widget.userName[0].toUpperCase() : '?',
+                        style: const TextStyle(color: Colors.white, fontSize: 28),
+                      ),
+                    ),
               const SizedBox(width: 18),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(userName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 20, color: Colors.white)),
-                    Text(userEmail, style: const TextStyle(color: Colors.white54, fontSize: 15)),
-                  ],
-                ),
+                child: isGroup
+                    ? StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                        stream: FirebaseFirestore.instance
+                            .collection('group_chats')
+                            .doc(widget.userEmail)
+                            .snapshots(),
+                        builder: (context, snapshot) {
+                          final data = snapshot.data?.data() ?? {};
+                          final groupName = data['name'] ?? widget.userName;
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(groupName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 20, color: Colors.white)),
+                              Text(widget.userEmail, style: const TextStyle(color: Colors.white54, fontSize: 15)),
+                            ],
+                          );
+                        },
+                      )
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(widget.userName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 20, color: Colors.white)),
+                          Text(widget.userEmail, style: const TextStyle(color: Colors.white54, fontSize: 15)),
+                        ],
+                      ),
               ),
             ],
           ),
@@ -71,61 +183,8 @@ class ChatProfilePage extends StatelessWidget {
           ),
           const SizedBox(height: 32),
           // Images section
-          if (images.isNotEmpty) ...[
-            const Text('Images', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.white)),
-            const SizedBox(height: 14),
-            GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 3,
-                crossAxisSpacing: 10,
-                mainAxisSpacing: 10,
-                childAspectRatio: 1,
-              ),
-              itemCount: images.length,
-              itemBuilder: (context, idx) {
-                final imgPath = images[idx]['image'];
-                return GestureDetector(
-                  onTap: () => _openImageViewer(context, imgPath),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(14),
-                    child: Image.file(File(imgPath), fit: BoxFit.cover),
-                  ),
-                );
-              },
-            ),
-            const SizedBox(height: 32),
-          ],
           // Links section
-          if (links.isNotEmpty) ...[
-            const Text('Links', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.white)),
-            const SizedBox(height: 10),
-            ...links.map((msg) => Card(
-              color: Colors.grey[900],
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              child: ListTile(
-                leading: const Icon(Icons.link, color: Colors.blueAccent),
-                title: Text(msg['text'], style: const TextStyle(color: Colors.white)),
-                onTap: () {},
-              ),
-            )),
-            const SizedBox(height: 32),
-          ],
           // Files section
-          if (files.isNotEmpty) ...[
-            const Text('Files', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.white)),
-            const SizedBox(height: 10),
-            ...files.map((msg) => Card(
-              color: Colors.grey[900],
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              child: ListTile(
-                leading: const Icon(Icons.insert_drive_file, color: Colors.green),
-                title: Text(msg['file'], style: const TextStyle(color: Colors.white)),
-                onTap: () {},
-              ),
-            )),
-          ],
         ],
       ),
     );
@@ -149,21 +208,6 @@ class ChatProfilePage extends StatelessWidget {
       ),
     );
   }
-
-  bool _isLink(String? text) {
-    if (text == null) return false;
-    final urlPattern = r'^(http|https):\/\/';
-    return RegExp(urlPattern).hasMatch(text.trim());
-  }
-
-  void _openImageViewer(BuildContext context, String imgPath) {
-    showDialog(
-      context: context,
-      builder: (context) {
-        return _ZoomableImageDialog(imgPath: imgPath);
-      },
-    );
-  }
 }
 
 class _ZoomableImageDialog extends StatefulWidget {
@@ -176,16 +220,13 @@ class _ZoomableImageDialog extends StatefulWidget {
 
 class _ZoomableImageDialogState extends State<_ZoomableImageDialog> {
   double _scale = 1.0;
-  double _baseScale = 1.0;
 
   void _handleDoubleTap() {
     setState(() {
       if (_scale > 1.1) {
         _scale = 1.0;
-        _baseScale = 1.0;
       } else {
         _scale = 2.5;
-        _baseScale = 2.5;
       }
     });
   }
@@ -243,6 +284,101 @@ class _ZoomableImageDialogState extends State<_ZoomableImageDialog> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _EditGroupDialog extends StatefulWidget {
+  final String groupId;
+  final String currentName;
+  const _EditGroupDialog({required this.groupId, required this.currentName});
+
+  @override
+  State<_EditGroupDialog> createState() => _EditGroupDialogState();
+}
+
+class _EditGroupDialogState extends State<_EditGroupDialog> {
+  final TextEditingController _nameController = TextEditingController();
+  String? _pickedImagePath;
+  bool _loading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController.text = widget.currentName;
+  }
+
+  Future<void> _pickImage() async {
+    final picker = await ImagePicker().pickImage(source: ImageSource.gallery);
+    if (picker != null) {
+      setState(() {
+        _pickedImagePath = picker.path;
+      });
+    }
+  }
+
+  Future<void> _save() async {
+    setState(() => _loading = true);
+    String? imageUrl;
+    if (_pickedImagePath != null) {
+      imageUrl = await ChatService.uploadImageAndGetUrl(_pickedImagePath!);
+    }
+    final groupDoc = FirebaseFirestore.instance.collection('group_chats').doc(widget.groupId);
+    final updateData = {'name': _nameController.text.trim()};
+    if (imageUrl != null) updateData['image'] = imageUrl;
+    await groupDoc.set(updateData, SetOptions(merge: true));
+    setState(() => _loading = false);
+    if (mounted) Navigator.of(context).pop({'name': _nameController.text.trim(), 'image': imageUrl});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: const Color(0xFF23242B),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Edit Group Info', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
+            const SizedBox(height: 18),
+            GestureDetector(
+              onTap: _pickImage,
+              child: _pickedImagePath == null
+                  ? CircleAvatar(radius: 36, backgroundColor: Colors.blueGrey.shade700, child: const Icon(Icons.camera_alt, color: Colors.white, size: 32))
+                  : CircleAvatar(radius: 36, backgroundImage: FileImage(File(_pickedImagePath!))),
+            ),
+            const SizedBox(height: 18),
+            TextField(
+              controller: _nameController,
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                labelText: 'Group Name',
+                labelStyle: const TextStyle(color: Colors.white54),
+                filled: true,
+                fillColor: Colors.grey[900],
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+            ),
+            const SizedBox(height: 18),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Cancel', style: TextStyle(color: Colors.white70)),
+                ),
+                ElevatedButton(
+                  onPressed: _loading ? null : _save,
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.purpleAccent),
+                  child: _loading ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text('Save', style: TextStyle(color: Colors.white)),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
