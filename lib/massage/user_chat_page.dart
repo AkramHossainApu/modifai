@@ -140,6 +140,21 @@ class _UserChatPageState extends State<UserChatPage> {
           return;
         }
       }
+      // --- GROUP CHAT LOGIC ---
+      if (widget.isGroup) {
+        await GroupChatService.sendGroupMessage(
+          groupId: widget.userEmail,
+          sender: senderUsername, // Use display name for group chat
+          text: text,
+          timestamp: now,
+          imagePath: imageUrl,
+        );
+        _msgController.clear();
+        setState(() {
+          _pickedImagePath = null;
+        });
+        return;
+}
       // --- AI @askmodifai logic ---
       if (text.trim().toLowerCase().startsWith('@askmodifai')) {
         final aiPrompt = text.replaceFirst(RegExp(r'^@askmodifai', caseSensitive: false), '').trim();
