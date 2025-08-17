@@ -4,9 +4,21 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'dart:io';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart';
 
 class ChatService {
-  static const String baseUrl = 'http://localhost:8000'; // Change if needed
+  // Automatically select backend URL based on platform
+  static String get baseUrl {
+    if (kIsWeb) {
+      return 'http://localhost:8000';
+    } else if (Platform.isAndroid) {
+      // Android emulator
+      return 'http://10.0.2.2:8000';
+    } else {
+      // iOS simulator, desktop, or real device (update to your LAN IP if needed)
+      return 'http://localhost:8000';
+    }
+  }
 
   static Future<String> _getUsernameFromEmail(String email) async {
     // Try to get the user's name from Firestore, fallback to email username part
@@ -47,9 +59,11 @@ class ChatService {
     required String text,
     required double timestamp,
     String? imagePath, // Optional image path
+    String? audioPath, // Optional audio path
     String? chatIdOverride, // NEW: allow explicit chatId
   }) async {
-    final chatId = chatIdOverride ?? await getChatIdByUsernames(sender, receiver);
+    final chatId =
+        chatIdOverride ?? await getChatIdByUsernames(sender, receiver);
     final messageData = {
       'sender': sender,
       'receiver': receiver,
@@ -58,6 +72,9 @@ class ChatService {
     };
     if (imagePath != null && imagePath.isNotEmpty) {
       messageData['image'] = imagePath;
+    }
+    if (audioPath != null && audioPath.isNotEmpty) {
+      messageData['audio'] = audioPath;
     }
     await FirebaseFirestore.instance
         .collection('chats')
@@ -77,7 +94,11 @@ class ChatService {
         .collection('messages')
         .orderBy('timestamp')
         .get();
-    return snapshot.docs.map((doc) => doc.data()).toList();
+    return snapshot.docs.map((doc) {
+      final data = doc.data();
+      data['id'] = doc.id;
+      return data;
+    }).toList();
   }
 
   static Stream<List<Map<String, dynamic>>> chatStream({
@@ -91,7 +112,13 @@ class ChatService {
         .collection('messages')
         .orderBy('timestamp')
         .snapshots()
-        .map((snapshot) => snapshot.docs.map((doc) => doc.data()).toList());
+        .map(
+          (snapshot) => snapshot.docs.map((doc) {
+            final data = doc.data();
+            data['id'] = doc.id;
+            return data;
+          }).toList(),
+        );
   }
 
   static Future<void> initializeFCM() async {
@@ -205,37 +232,17 @@ class ChatService {
   }
 
   static Future<String?> uploadImageAndGetUrl(String filePath) async {
-    // Replace with your Imgur Client ID
-    const clientId = 'YOUR_IMGUR_CLIENT_ID';
-    final file = File(filePath);
-    if (!await file.exists()) {
-      print('File does not exist: ' + filePath);
-      return null;
+    final uri = Uri.parse('$baseUrl/upload_drive');
+    final req = http.MultipartRequest('POST', uri);
+    req.files.add(await http.MultipartFile.fromPath('file', filePath));
+    final rsp = await req.send();
+    final body = await rsp.stream.bytesToString();
+    if (rsp.statusCode == 200) {
+      final data = jsonDecode(body);
+      return data['url'] as String?;
     }
-    final bytes = await file.readAsBytes();
-    final base64Image = base64Encode(bytes);
-    final url = Uri.parse('https://api.imgur.com/3/image');
-    try {
-      final response = await http.post(
-        url,
-        headers: {'Authorization': 'Client-ID $clientId'},
-        body: {'image': base64Image},
-      );
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final imageUrl = data['data']['link'];
-        print('Imgur upload success: $imageUrl');
-        return imageUrl;
-      } else {
-        print('Imgur upload failed: ${response.statusCode} ${response.body}');
-        return null;
-      }
-    } catch (e, stack) {
-      print('Imgur upload error:');
-      print(e);
-      print(stack);
-      return null;
-    }
+    print('Drive upload failed: $body');
+    return null;
   }
 
   static Future<void> deleteUserChat(String user1, String user2) async {
@@ -261,4 +268,52 @@ class ChatService {
   ///   timestamp: ...,
   ///   chatIdOverride: chatId,
   /// );
+
+  static Future<void> deleteMessage({
+    required String chatId,
+    required String messageId,
+    String? imageUrl,
+    String? audioUrl,
+  }) async {
+    // Delete the message from Firestore
+    await FirebaseFirestore.instance
+        .collection('chats')
+        .doc(chatId)
+        .collection('messages')
+        .doc(messageId)
+        .delete();
+    // Delete image/audio from Google Drive if present
+    if ((imageUrl != null && imageUrl.isNotEmpty) ||
+        (audioUrl != null && audioUrl.isNotEmpty)) {
+      final uri = Uri.parse(' {baseUrl}/delete_drive');
+      final body = <String, dynamic>{};
+      if (imageUrl != null && imageUrl.isNotEmpty) body['url'] = imageUrl;
+      if (audioUrl != null && audioUrl.isNotEmpty) body['audioUrl'] = audioUrl;
+      try {
+        await http.post(
+          uri,
+          body: jsonEncode(body),
+          headers: {'Content-Type': 'application/json'},
+        );
+      } catch (e) {
+        print('Failed to delete file from Drive: $e');
+      }
+    }
+  }
+
+  static Future<void> deleteUserMessage({
+    required String sender,
+    required String receiver,
+    required String messageId,
+    String? imageUrl,
+    String? audioUrl,
+  }) async {
+    final chatId = await getChatIdByUsernames(sender, receiver);
+    await deleteMessage(
+      chatId: chatId,
+      messageId: messageId,
+      imageUrl: imageUrl,
+      audioUrl: audioUrl,
+    );
+  }
 }

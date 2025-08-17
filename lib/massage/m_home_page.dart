@@ -120,7 +120,10 @@ class _AddUserPageState extends State<AddUserPage> {
 
   // Helper to get group name and image from Firestore for group chats
   Future<Map<String, dynamic>> _getGroupInfo(String groupId) async {
-    final doc = await FirebaseFirestore.instance.collection('group_chats').doc(groupId).get();
+    final doc = await FirebaseFirestore.instance
+        .collection('group_chats')
+        .doc(groupId)
+        .get();
     if (doc.exists) {
       final data = doc.data() ?? {};
       return {
@@ -150,15 +153,9 @@ class _AddUserPageState extends State<AddUserPage> {
           ),
         ),
       );
-      // If group info was updated, refresh home page
-      if (result != null && mounted) {
-        await _loadAllChatsForCurrentUser();
-        setState(() {});
-      } else {
-        setState(() {
-          _unreadChats.remove(chatId);
-        });
-      }
+      // Always refresh chat list after returning from chat
+      await _loadAllChatsForCurrentUser();
+      setState(() {});
     } else {
       final user = _firestoreUsers.firstWhere(
         (u) => u['email'] == chatId,
@@ -174,7 +171,8 @@ class _AddUserPageState extends State<AddUserPage> {
           ),
         ),
       );
-      // When returning from chat, re-check unread status
+      // Always refresh chat list after returning from chat
+      await _loadAllChatsForCurrentUser();
       setState(() {
         _unreadChats.remove(chatId);
       });
@@ -528,41 +526,85 @@ class _AddUserPageState extends State<AddUserPage> {
                                   itemBuilder: (context, index) {
                                     final chatId = _sortedUsers[index];
                                     final isGroup = _isGroupChat(chatId);
-                                    final isHighlighted = _unreadChats.contains(chatId);
+                                    final isHighlighted = _unreadChats.contains(
+                                      chatId,
+                                    );
                                     if (isGroup) {
-                                      return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                                      return StreamBuilder<
+                                        DocumentSnapshot<Map<String, dynamic>>
+                                      >(
                                         stream: FirebaseFirestore.instance
                                             .collection('group_chats')
                                             .doc(chatId)
                                             .snapshots(),
                                         builder: (context, snapshot) {
-                                          final data = snapshot.data?.data() ?? {};
-                                          final groupName = data['name'] ?? chatId;
+                                          final data =
+                                              snapshot.data?.data() ?? {};
+                                          final groupName =
+                                              data['name'] ?? chatId;
                                           final groupImage = data['image'];
                                           return AnimatedContainer(
-                                            duration: const Duration(milliseconds: 500),
+                                            duration: const Duration(
+                                              milliseconds: 500,
+                                            ),
                                             curve: Curves.easeInOut,
                                             decoration: BoxDecoration(
                                               color: isHighlighted
-                                                  ? Colors.blueAccent.withOpacity(0.18)
+                                                  ? Colors.blueAccent
+                                                        .withOpacity(0.18)
                                                   : Colors.grey[850],
-                                              borderRadius: BorderRadius.circular(16),
+                                              borderRadius:
+                                                  BorderRadius.circular(16),
                                               boxShadow: isHighlighted
                                                   ? [
                                                       BoxShadow(
-                                                        color: Colors.blueAccent.withOpacity(0.18),
+                                                        color: Colors.blueAccent
+                                                            .withOpacity(0.18),
                                                         blurRadius: 12,
-                                                        offset: const Offset(0, 2),
+                                                        offset: const Offset(
+                                                          0,
+                                                          2,
+                                                        ),
                                                       ),
                                                     ]
                                                   : [],
                                             ),
                                             child: ListTile(
                                               leading: groupImage != null
-                                                  ? CircleAvatar(backgroundImage: NetworkImage(groupImage), radius: 24)
-                                                  : CircleAvatar(backgroundColor: Colors.blueAccent, radius: 24, child: Text(groupName.isNotEmpty ? groupName[0].toUpperCase() : '?', style: const TextStyle(color: Colors.white))),
-                                              title: Text(groupName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
-                                              subtitle: Text(chatId, style: const TextStyle(color: Colors.white54)),
+                                                  ? CircleAvatar(
+                                                      backgroundImage:
+                                                          NetworkImage(
+                                                            groupImage,
+                                                          ),
+                                                      radius: 24,
+                                                    )
+                                                  : CircleAvatar(
+                                                      backgroundColor:
+                                                          Colors.blueAccent,
+                                                      radius: 24,
+                                                      child: Text(
+                                                        groupName.isNotEmpty
+                                                            ? groupName[0]
+                                                                  .toUpperCase()
+                                                            : '?',
+                                                        style: const TextStyle(
+                                                          color: Colors.white,
+                                                        ),
+                                                      ),
+                                                    ),
+                                              title: Text(
+                                                groupName,
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                              ),
+                                              subtitle: Text(
+                                                chatId,
+                                                style: const TextStyle(
+                                                  color: Colors.white54,
+                                                ),
+                                              ),
                                               onTap: () => _openChat(chatId),
                                             ),
                                           );
@@ -570,13 +612,13 @@ class _AddUserPageState extends State<AddUserPage> {
                                       );
                                     } else {
                                       final chatUserEmail = _sortedUsers[index];
-                                      final chatUser = _firestoreUsers.firstWhere(
-                                        (u) => u['email'] == chatUserEmail,
-                                        orElse: () => <String, dynamic>{},
-                                      );
-                                      final isHighlighted = _unreadChats.contains(
-                                        chatUserEmail,
-                                      );
+                                      final chatUser = _firestoreUsers
+                                          .firstWhere(
+                                            (u) => u['email'] == chatUserEmail,
+                                            orElse: () => <String, dynamic>{},
+                                          );
+                                      final isHighlighted = _unreadChats
+                                          .contains(chatUserEmail);
                                       return AnimatedContainer(
                                         duration: const Duration(
                                           milliseconds: 500,
@@ -588,7 +630,9 @@ class _AddUserPageState extends State<AddUserPage> {
                                                   0.18,
                                                 )
                                               : Colors.grey[850],
-                                          borderRadius: BorderRadius.circular(16),
+                                          borderRadius: BorderRadius.circular(
+                                            16,
+                                          ),
                                           boxShadow: isHighlighted
                                               ? [
                                                   BoxShadow(
@@ -612,7 +656,7 @@ class _AddUserPageState extends State<AddUserPage> {
                                                           .isNotEmpty
                                                       ? (chatUser['name'] ??
                                                                 chatUserEmail)[0]
-                                                          .toUpperCase()
+                                                            .toUpperCase()
                                                       : '?',
                                                   style: const TextStyle(
                                                     color: Colors.white,
@@ -666,7 +710,8 @@ class _AddUserPageState extends State<AddUserPage> {
                                             showDialog(
                                               context: context,
                                               builder: (ctx) => AlertDialog(
-                                                backgroundColor: Colors.grey[900],
+                                                backgroundColor:
+                                                    Colors.grey[900],
                                                 title: const Text(
                                                   'Delete Chat',
                                                   style: TextStyle(
@@ -684,7 +729,8 @@ class _AddUserPageState extends State<AddUserPage> {
                                                     child: const Text(
                                                       'Cancel',
                                                       style: TextStyle(
-                                                        color: Colors.blueAccent,
+                                                        color:
+                                                            Colors.blueAccent,
                                                       ),
                                                     ),
                                                     onPressed: () =>
@@ -714,33 +760,59 @@ class _AddUserPageState extends State<AddUserPage> {
                                                         chatUserEmail,
                                                       )) {
                                                         // Delete group chat document from Firestore
-                                                        await FirebaseFirestore.instance
-                                                            .collection('group_chats')
+                                                        await FirebaseFirestore
+                                                            .instance
+                                                            .collection(
+                                                              'group_chats',
+                                                            )
                                                             .doc(chatUserEmail)
                                                             .delete();
                                                         // Optionally: delete all group messages subcollection
-                                                        final messages = await FirebaseFirestore.instance
-                                                            .collection('group_chats')
-                                                            .doc(chatUserEmail)
-                                                            .collection('messages')
-                                                            .get();
-                                                        for (final doc in messages.docs) {
-                                                          await doc.reference.delete();
+                                                        final messages =
+                                                            await FirebaseFirestore
+                                                                .instance
+                                                                .collection(
+                                                                  'group_chats',
+                                                                )
+                                                                .doc(
+                                                                  chatUserEmail,
+                                                                )
+                                                                .collection(
+                                                                  'messages',
+                                                                )
+                                                                .get();
+                                                        for (final doc
+                                                            in messages.docs) {
+                                                          await doc.reference
+                                                              .delete();
                                                         }
                                                       } else {
                                                         // Delete user-to-user chat document and all messages from Firestore
-                                                        final chatId = await ChatService.getChatIdByUsernames(_currentUserEmail!, chatUserEmail);
+                                                        final chatId =
+                                                            await ChatService.getChatIdByUsernames(
+                                                              _currentUserEmail!,
+                                                              chatUserEmail,
+                                                            );
                                                         // Delete all messages in the chat
-                                                        final messages = await FirebaseFirestore.instance
-                                                            .collection('chats')
-                                                            .doc(chatId)
-                                                            .collection('messages')
-                                                            .get();
-                                                        for (final doc in messages.docs) {
-                                                          await doc.reference.delete();
+                                                        final messages =
+                                                            await FirebaseFirestore
+                                                                .instance
+                                                                .collection(
+                                                                  'chats',
+                                                                )
+                                                                .doc(chatId)
+                                                                .collection(
+                                                                  'messages',
+                                                                )
+                                                                .get();
+                                                        for (final doc
+                                                            in messages.docs) {
+                                                          await doc.reference
+                                                              .delete();
                                                         }
                                                         // Delete the chat document itself
-                                                        await FirebaseFirestore.instance
+                                                        await FirebaseFirestore
+                                                            .instance
                                                             .collection('chats')
                                                             .doc(chatId)
                                                             .delete();

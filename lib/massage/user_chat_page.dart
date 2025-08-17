@@ -4,11 +4,18 @@ import 'dart:io';
 import '../services/chat_service.dart';
 import '../services/group_chat_service.dart';
 import '../services/api_service.dart';
+import '../services/call_service.dart';
 import 'chat_profile_page.dart';
 import 'animated_circle.dart';
 import 'camera_screen.dart';
 import 'image_with_aspect.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:intl/intl.dart';
+import 'package:record/record.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:just_audio/just_audio.dart';
+import 'dart:async';
+import 'call_screen.dart';
 
 class UserChatPage extends StatefulWidget {
   final String userName;
@@ -34,10 +41,21 @@ class _UserChatPageState extends State<UserChatPage> {
   String? _senderName;
   bool _isRecording = false;
   String? _pickedImagePath;
+  String? _pickedAudioPath;
+  final AudioRecorder _audioRecorder = AudioRecorder();
   List<Map<String, dynamic>> _lastChatMessages = [];
-  String? _groupImageUrl;
   String? _groupName;
   bool _showingAtSuggestion = false;
+  bool _showRecordingDialog = false;
+  Duration _recordingDuration = Duration.zero;
+  Timer? _recordingTimer;
+  Stream<DocumentSnapshot<Map<String, dynamic>>>? _callStream;
+  bool _isCalling = false;
+  bool _isRinging = false;
+  bool _isInCall = false;
+  bool _isVideoCall = false;
+  String? _callPeerName;
+  String? _callPeerEmail;
 
   @override
   void initState() {
@@ -46,22 +64,65 @@ class _UserChatPageState extends State<UserChatPage> {
     if (widget.isGroup) {
       _fetchGroupInfo();
     }
+    _listenForIncomingCalls();
   }
 
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (widget.isGroup) {
-      _fetchGroupInfo();
-    }
-  }
-
-  @override
-  void didUpdateWidget(covariant UserChatPage oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.isGroup && oldWidget.userEmail != widget.userEmail) {
-      _fetchGroupInfo();
-    }
+  void _listenForIncomingCalls() {
+    final myEmail = widget.currentUserEmail.trim().toLowerCase();
+    final peerEmail = widget.userEmail.trim().toLowerCase();
+    _callStream = CallService.callStream(myEmail, peerEmail);
+    _callStream!.listen((doc) async {
+      final data = doc.data();
+      if (data == null) return;
+      debugPrint('Call doc: ' + data.toString());
+      final status = data['status'] as String?;
+      final isVideo = data['isVideo'] as bool? ?? false;
+      final now = DateTime.now().millisecondsSinceEpoch / 1000.0;
+      final created = (data['created'] ?? data['timestamp'] ?? 0).toDouble();
+      // Only show dialog if call is recent and status is 'ringing'
+      if (status == 'ringing' &&
+          data['receiverId'] == myEmail &&
+          (now - created).abs() <= 30) {
+        setState(() {
+          _isRinging = true;
+          _isVideoCall = isVideo;
+          _callPeerName = data['callerName'];
+          _callPeerEmail = data['callerId'];
+        });
+        _showIncomingCallDialog();
+      } else if (status == 'accepted') {
+        // Only show in-call if we are already ringing or calling
+        if (_isRinging || _isCalling) {
+          setState(() {
+            _isInCall = true;
+            _isCalling = false;
+            _isRinging = false;
+          });
+          Navigator.of(
+            context,
+            rootNavigator: true,
+          ).pop(); // Close ringing dialog
+          _showInCallDialog();
+        }
+      } else if (status == 'ended') {
+        setState(() {
+          _isCalling = false;
+          _isRinging = false;
+          _isInCall = false;
+        });
+        Navigator.of(
+          context,
+          rootNavigator: true,
+        ).pop(); // Close any call dialog
+        // Clean up call doc if not already deleted
+        try {
+          await CallService.deleteCallDoc(myEmail, peerEmail);
+        } catch (_) {}
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Call ended.')));
+      }
+    });
   }
 
   Future<void> _loadNames() async {
@@ -85,12 +146,14 @@ class _UserChatPageState extends State<UserChatPage> {
   }
 
   Future<void> _fetchGroupInfo() async {
-    final doc = await FirebaseFirestore.instance.collection('group_chats').doc(widget.userEmail).get();
+    final doc = await FirebaseFirestore.instance
+        .collection('group_chats')
+        .doc(widget.userEmail)
+        .get();
     if (doc.exists) {
       final data = doc.data() ?? {};
       setState(() {
         _groupName = data['name'] ?? widget.userName;
-        _groupImageUrl = data['image'];
       });
     }
   }
@@ -110,15 +173,141 @@ class _UserChatPageState extends State<UserChatPage> {
         .join(' ');
   }
 
+  String _formatTimestamp(double timestamp) {
+    final dt = DateTime.fromMillisecondsSinceEpoch((timestamp * 1000).toInt());
+    return DateFormat('hh:mm a').format(dt); // e.g., 02:15 PM
+  }
+
+  Future<void> _toggleRecording() async {
+    if (_isRecording) {
+      final path = await _audioRecorder.stop();
+      _recordingTimer?.cancel();
+      setState(() {
+        _isRecording = false;
+        _pickedAudioPath = path;
+        _showRecordingDialog = false;
+      });
+    } else {
+      final dir = await getTemporaryDirectory();
+      final filePath =
+          '${dir.path}/audio_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      await _audioRecorder.start(
+        const RecordConfig(
+          encoder: AudioEncoder.aacLc,
+          bitRate: 128000,
+          sampleRate: 44100,
+        ),
+        path: filePath,
+      );
+      setState(() {
+        _isRecording = true;
+        _pickedAudioPath = null;
+        _showRecordingDialog = true;
+        _recordingDuration = Duration.zero;
+      });
+      _recordingTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+        if (_isRecording) {
+          setState(() {
+            _recordingDuration = Duration(seconds: timer.tick);
+          });
+        }
+      });
+    }
+  }
+
+  Widget _buildRecordingDialog() {
+    return Center(
+      child: Material(
+        color: Colors.black54,
+        child: Container(
+          padding: const EdgeInsets.all(32),
+          decoration: BoxDecoration(
+            color: Colors.grey[900],
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.mic, color: Colors.redAccent, size: 48),
+              const SizedBox(height: 16),
+              Text(
+                _formatDuration(_recordingDuration),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Recording...',
+                style: TextStyle(color: Colors.white70),
+              ),
+              const SizedBox(height: 24),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.stop),
+                label: const Text('Stop'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.redAccent,
+                ),
+                onPressed: _toggleRecording,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _formatDuration(Duration d) {
+    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
+  Widget _buildAudioPreview() {
+    if (_pickedAudioPath == null) return const SizedBox.shrink();
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.blueGrey[900],
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.audiotrack, color: Colors.orangeAccent),
+          const SizedBox(width: 10),
+          const Text(
+            'Audio ready to send',
+            style: TextStyle(color: Colors.white),
+          ),
+          const SizedBox(width: 10),
+          IconButton(
+            icon: const Icon(Icons.close, color: Colors.redAccent),
+            onPressed: () {
+              setState(() {
+                _pickedAudioPath = null;
+              });
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
   void _sendMessage() async {
     final text = _msgController.text.trim();
-    if (text.isEmpty && _pickedImagePath == null) return;
+    if (text.isEmpty && _pickedImagePath == null && _pickedAudioPath == null)
+      return;
     final now = DateTime.now().millisecondsSinceEpoch / 1000.0;
     String senderUsername = _displayName(_senderName);
     String receiverUsername = _displayName(_receiverName);
     String? imageUrl;
+    String? audioUrl;
     try {
-      // Handle image upload if needed (unchanged)
+      // Handle image upload if needed
       if (_pickedImagePath != null) {
         final file = File(_pickedImagePath!);
         final exists = await file.exists();
@@ -134,9 +323,31 @@ class _UserChatPageState extends State<UserChatPage> {
         imageUrl = await ChatService.uploadImageAndGetUrl(_pickedImagePath!);
         if (imageUrl == null || !imageUrl.startsWith('http')) {
           if (!mounted) return;
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Image upload failed.')));
+          return;
+        }
+      }
+      // Handle audio upload if needed
+      if (_pickedAudioPath != null) {
+        final file = File(_pickedAudioPath!);
+        final exists = await file.exists();
+        if (!exists) {
+          if (!mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Image upload failed.')),
+            const SnackBar(
+              content: Text('Audio file does not exist or cannot be accessed.'),
+            ),
           );
+          return;
+        }
+        audioUrl = await ChatService.uploadImageAndGetUrl(_pickedAudioPath!);
+        if (audioUrl == null || !audioUrl.startsWith('http')) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Audio upload failed.')));
           return;
         }
       }
@@ -144,20 +355,24 @@ class _UserChatPageState extends State<UserChatPage> {
       if (widget.isGroup) {
         await GroupChatService.sendGroupMessage(
           groupId: widget.userEmail,
-          sender: senderUsername, // Use display name for group chat
+          sender: senderUsername,
           text: text,
           timestamp: now,
           imagePath: imageUrl,
+          audioPath: audioUrl,
         );
         _msgController.clear();
         setState(() {
           _pickedImagePath = null;
+          _pickedAudioPath = null;
         });
         return;
-}
+      }
       // --- AI @askmodifai logic ---
       if (text.trim().toLowerCase().startsWith('@askmodifai')) {
-        final aiPrompt = text.replaceFirst(RegExp(r'^@askmodifai', caseSensitive: false), '').trim();
+        final aiPrompt = text
+            .replaceFirst(RegExp(r'^@askmodifai', caseSensitive: false), '')
+            .trim();
         // Save the user's @askmodifai message as normal
         await ChatService.sendMessage(
           sender: senderUsername,
@@ -169,6 +384,7 @@ class _UserChatPageState extends State<UserChatPage> {
         _msgController.clear();
         setState(() {
           _pickedImagePath = null;
+          _pickedAudioPath = null;
           // Show ModifAI typing indicator in chat
           _lastChatMessages.add({
             'sender': 'ModifAI',
@@ -184,15 +400,19 @@ class _UserChatPageState extends State<UserChatPage> {
             if (aiPrompt.toLowerCase().contains('summarize')) {
               // Get last 5 user-to-user messages (excluding AI messages)
               final userMessages = _lastChatMessages
-                .where((msg) => (msg['sender'] as String?)?.toLowerCase() != 'modifai')
-                .toList();
+                  .where(
+                    (msg) =>
+                        (msg['sender'] as String?)?.toLowerCase() != 'modifai',
+                  )
+                  .toList();
               final last5 = userMessages.length >= 5
-                ? userMessages.sublist(userMessages.length - 5)
-                : userMessages;
-              final chatText = last5.map((m) =>
-                '${m['sender']}: ${m['text'] ?? ''}').join('\n');
+                  ? userMessages.sublist(userMessages.length - 5)
+                  : userMessages;
+              final chatText = last5
+                  .map((m) => '${m['sender']}: ${m['text'] ?? ''}')
+                  .join('\n');
               aiReply = await ApiService.getChatbotReply(
-                'Summarize the following chat between users:\n$chatText'
+                'Summarize the following chat between users:\n$chatText',
               );
             } else {
               aiReply = await ApiService.getChatbotReply(aiPrompt);
@@ -200,12 +420,16 @@ class _UserChatPageState extends State<UserChatPage> {
             // Remove the typing indicator
             setState(() {
               final idx = _lastChatMessages.lastIndexWhere(
-                (msg) => msg['sender'] == 'ModifAI' && msg['text'] == '[typing]'
+                (msg) =>
+                    msg['sender'] == 'ModifAI' && msg['text'] == '[typing]',
               );
               if (idx != -1) _lastChatMessages.removeAt(idx);
             });
             // Save the AI response to Firestore in the same chat document
-            final chatId = await ChatService.getUserToUserChatId(senderUsername, receiverUsername);
+            final chatId = await ChatService.getUserToUserChatId(
+              senderUsername,
+              receiverUsername,
+            );
             await ChatService.sendMessage(
               sender: 'ModifAI',
               receiver: chatId,
@@ -226,7 +450,8 @@ class _UserChatPageState extends State<UserChatPage> {
           } catch (e) {
             setState(() {
               final idx = _lastChatMessages.lastIndexWhere(
-                (msg) => msg['sender'] == 'ModifAI' && msg['text'] == '[typing]'
+                (msg) =>
+                    msg['sender'] == 'ModifAI' && msg['text'] == '[typing]',
               );
               if (idx != -1) _lastChatMessages.removeAt(idx);
               _lastChatMessages.add({
@@ -236,7 +461,10 @@ class _UserChatPageState extends State<UserChatPage> {
                 'timestamp': now + 0.001,
               });
             });
-            final chatId = await ChatService.getUserToUserChatId(senderUsername, receiverUsername);
+            final chatId = await ChatService.getUserToUserChatId(
+              senderUsername,
+              receiverUsername,
+            );
             await ChatService.sendMessage(
               sender: 'ModifAI',
               receiver: chatId,
@@ -256,10 +484,12 @@ class _UserChatPageState extends State<UserChatPage> {
         text: text,
         timestamp: now,
         imagePath: imageUrl,
+        audioPath: audioUrl,
       );
       _msgController.clear();
       setState(() {
         _pickedImagePath = null;
+        _pickedAudioPath = null;
       });
     } catch (e) {
       if (!mounted) return;
@@ -301,19 +531,14 @@ class _UserChatPageState extends State<UserChatPage> {
     });
   }
 
-  void _toggleRecording() {
-    setState(() {
-      _isRecording = !_isRecording;
-    });
-    // Implement actual recording logic as needed
-  }
-
   void _openProfile() async {
     // If group, pass group name/image
     final result = await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => ChatProfilePage(
-          userName: widget.isGroup ? (_groupName ?? widget.userName) : widget.userName,
+          userName: widget.isGroup
+              ? (_groupName ?? widget.userName)
+              : widget.userName,
           userEmail: widget.userEmail,
           chatMessages: _lastChatMessages,
         ),
@@ -335,32 +560,252 @@ class _UserChatPageState extends State<UserChatPage> {
     final matches = modifaiPattern.allMatches(text);
     for (final match in matches) {
       if (match.start > start) {
-        spans.add(TextSpan(
-          text: text.substring(start, match.start),
-          style: const TextStyle(color: Colors.white, fontSize: 16),
-        ));
+        spans.add(
+          TextSpan(
+            text: text.substring(start, match.start),
+            style: const TextStyle(color: Colors.white, fontSize: 16),
+          ),
+        );
       }
-      spans.add(TextSpan(
-        text: match.group(0),
-        style: const TextStyle(color: Colors.purpleAccent, fontWeight: FontWeight.bold, fontSize: 16),
-      ));
+      spans.add(
+        TextSpan(
+          text: match.group(0),
+          style: const TextStyle(
+            color: Colors.purpleAccent,
+            fontWeight: FontWeight.bold,
+            fontSize: 16,
+          ),
+        ),
+      );
       start = match.end;
     }
     if (start < text.length) {
-      spans.add(TextSpan(
-        text: text.substring(start),
-        style: const TextStyle(color: Colors.white, fontSize: 16),
-      ));
+      spans.add(
+        TextSpan(
+          text: text.substring(start),
+          style: const TextStyle(color: Colors.white, fontSize: 16),
+        ),
+      );
     }
     return RichText(text: TextSpan(children: spans));
+  }
+
+  void _startCall({required bool isVideo}) async {
+    setState(() {
+      _isCalling = true;
+      _isVideoCall = isVideo;
+    });
+    final callerId = widget.currentUserEmail.trim().toLowerCase();
+    final receiverId = widget.userEmail.trim().toLowerCase();
+    final callId = CallService.getCallDocId(callerId, receiverId);
+    debugPrint('Starting call with callId: ' + callId);
+    await CallService.startCall(
+      callerId: callerId,
+      callerName: _senderName ?? widget.currentUserEmail,
+      receiverId: receiverId,
+      receiverName: _receiverName ?? widget.userEmail,
+      isVideo: isVideo,
+    );
+    _showCallingDialog(callId, callerId, receiverId);
+  }
+
+  void _showCallingDialog(String callId, String callerId, String receiverId) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF23242B),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(
+              _isVideoCall ? Icons.videocam : Icons.call,
+              color: Colors.blueAccent,
+            ),
+            const SizedBox(width: 10),
+            Text('Calling...', style: TextStyle(color: Colors.white)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 16),
+            const CircularProgressIndicator(),
+            const SizedBox(height: 16),
+            Text(
+              widget.userName,
+              style: const TextStyle(color: Colors.white, fontSize: 18),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              widget.userEmail,
+              style: const TextStyle(color: Colors.white54, fontSize: 14),
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.call_end, color: Colors.white),
+              label: const Text(
+                'Cancel',
+                style: TextStyle(color: Colors.white),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.redAccent,
+              ),
+              onPressed: () async {
+                await CallService.endCall(callerId, receiverId);
+                setState(() {
+                  _isCalling = false;
+                });
+                Navigator.of(context, rootNavigator: true).pop();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showInCallDialog() {
+    final callerId = widget.currentUserEmail.trim().toLowerCase();
+    final receiverId = widget.userEmail.trim().toLowerCase();
+    final callId = CallService.getCallDocId(callerId, receiverId);
+    debugPrint('Opening CallScreen with callId: ' + callId);
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => CallScreen(
+          isCaller: _isCalling,
+          callId: callId,
+          selfId: callerId,
+          peerId: receiverId,
+          isVideo: _isVideoCall,
+          callerName: _senderName,
+          callerEmail: callerId,
+        ),
+      ),
+    );
+  }
+
+  void _showIncomingCallDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF23242B),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(
+              _isVideoCall ? Icons.videocam : Icons.call,
+              color: Colors.greenAccent,
+            ),
+            const SizedBox(width: 10),
+            const Text('Incoming Call', style: TextStyle(color: Colors.white)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 16),
+            Text(
+              _callPeerName ?? 'Unknown',
+              style: const TextStyle(color: Colors.white, fontSize: 18),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _callPeerEmail ?? '',
+              style: const TextStyle(color: Colors.white54, fontSize: 14),
+            ),
+            const SizedBox(height: 24),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.call_end, color: Colors.white),
+                  label: const Text(
+                    'Reject',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.redAccent,
+                  ),
+                  onPressed: () async {
+                    await CallService.endCall(
+                      _callPeerEmail!,
+                      widget.currentUserEmail.trim().toLowerCase(),
+                    );
+                    setState(() {
+                      _isRinging = false;
+                    });
+                    Navigator.of(context, rootNavigator: true).pop();
+                  },
+                ),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.call, color: Colors.white),
+                  label: const Text(
+                    'Accept',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.greenAccent,
+                  ),
+                  onPressed: () async {
+                    await CallService.acceptCall(
+                      _callPeerEmail!,
+                      widget.currentUserEmail.trim().toLowerCase(),
+                    );
+                    setState(() {
+                      _isInCall = true;
+                      _isRinging = false;
+                    });
+                    Navigator.of(context, rootNavigator: true).pop();
+                    // Open the real call screen
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) {
+                          final myEmail = widget.currentUserEmail
+                              .trim()
+                              .toLowerCase();
+                          final peerEmail = _callPeerEmail!;
+                          final callId = CallService.getCallDocId(
+                            peerEmail,
+                            myEmail,
+                          );
+                          debugPrint(
+                            'Accepting call, opening CallScreen with callId: ' +
+                                callId,
+                          );
+                          return CallScreen(
+                            isCaller: false,
+                            callId: callId,
+                            selfId: myEmail,
+                            peerId: peerEmail,
+                            isVideo: _isVideoCall,
+                            callerName: _callPeerName,
+                            callerEmail: _callPeerEmail,
+                          );
+                        },
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _recordingTimer?.cancel();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final sender = widget.currentUserEmail.trim().toLowerCase();
     final receiver = widget.userEmail.trim().toLowerCase();
-    final senderDisplay = _displayName(_senderName);
-    final receiverDisplay = _displayName(_receiverName);
     return Scaffold(
       backgroundColor: const Color(0xFF181A20),
       body: Stack(
@@ -402,7 +847,6 @@ class _UserChatPageState extends State<UserChatPage> {
                           builder: (context, snapshot) {
                             final data = snapshot.data?.data() ?? {};
                             final groupName = data['name'] ?? widget.userName;
-                            final groupImageUrl = data['image'];
                             return Row(
                               children: [
                                 GestureDetector(
@@ -416,26 +860,26 @@ class _UserChatPageState extends State<UserChatPage> {
                                 const SizedBox(width: 8),
                                 GestureDetector(
                                   onTap: _openProfile,
-                                  child: groupImageUrl != null
-                                      ? CircleAvatar(
-                                          backgroundImage: NetworkImage(groupImageUrl),
-                                          radius: 22,
-                                        )
-                                      : CircleAvatar(
-                                          backgroundColor: Colors.blueAccent,
-                                          radius: 22,
-                                          child: Text(
-                                            groupName.isNotEmpty ? groupName[0].toUpperCase() : '?',
-                                            style: const TextStyle(color: Colors.white),
-                                          ),
-                                        ),
+                                  child: CircleAvatar(
+                                    backgroundColor: Colors.blueAccent,
+                                    radius: 22,
+                                    child: Text(
+                                      groupName.isNotEmpty
+                                          ? groupName[0].toUpperCase()
+                                          : '?',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
                                 ),
                                 const SizedBox(width: 12),
                                 Expanded(
                                   child: GestureDetector(
                                     onTap: _openProfile,
                                     child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: [
                                         Text(
                                           groupName,
@@ -460,11 +904,15 @@ class _UserChatPageState extends State<UserChatPage> {
                                 IconButton(
                                   icon: Container(
                                     decoration: BoxDecoration(
-                                      color: Colors.greenAccent.withOpacity(0.18),
+                                      color: Colors.greenAccent.withOpacity(
+                                        0.18,
+                                      ),
                                       borderRadius: BorderRadius.circular(10),
                                       boxShadow: [
                                         BoxShadow(
-                                          color: Colors.greenAccent.withOpacity(0.18),
+                                          color: Colors.greenAccent.withOpacity(
+                                            0.18,
+                                          ),
                                           blurRadius: 8,
                                           offset: Offset(0, 2),
                                         ),
@@ -477,17 +925,20 @@ class _UserChatPageState extends State<UserChatPage> {
                                       size: 28,
                                     ),
                                   ),
-                                  onPressed: () {},
+                                  onPressed: () => _startCall(isVideo: false),
                                   tooltip: 'Call',
                                 ),
                                 IconButton(
                                   icon: Container(
                                     decoration: BoxDecoration(
-                                      color: Colors.purpleAccent.withOpacity(0.18),
+                                      color: Colors.purpleAccent.withOpacity(
+                                        0.18,
+                                      ),
                                       borderRadius: BorderRadius.circular(10),
                                       boxShadow: [
                                         BoxShadow(
-                                          color: Colors.purpleAccent.withOpacity(0.18),
+                                          color: Colors.purpleAccent
+                                              .withOpacity(0.18),
                                           blurRadius: 8,
                                           offset: Offset(0, 2),
                                         ),
@@ -500,7 +951,7 @@ class _UserChatPageState extends State<UserChatPage> {
                                       size: 28,
                                     ),
                                   ),
-                                  onPressed: () {},
+                                  onPressed: () => _startCall(isVideo: true),
                                   tooltip: 'Video Call',
                                 ),
                               ],
@@ -524,7 +975,9 @@ class _UserChatPageState extends State<UserChatPage> {
                                 backgroundColor: Colors.blueAccent,
                                 radius: 22,
                                 child: Text(
-                                  widget.userName.isNotEmpty ? widget.userName[0].toUpperCase() : '?',
+                                  widget.userName.isNotEmpty
+                                      ? widget.userName[0].toUpperCase()
+                                      : '?',
                                   style: const TextStyle(color: Colors.white),
                                 ),
                               ),
@@ -563,7 +1016,9 @@ class _UserChatPageState extends State<UserChatPage> {
                                   borderRadius: BorderRadius.circular(10),
                                   boxShadow: [
                                     BoxShadow(
-                                      color: Colors.greenAccent.withOpacity(0.18),
+                                      color: Colors.greenAccent.withOpacity(
+                                        0.18,
+                                      ),
                                       blurRadius: 8,
                                       offset: Offset(0, 2),
                                     ),
@@ -576,7 +1031,7 @@ class _UserChatPageState extends State<UserChatPage> {
                                   size: 28,
                                 ),
                               ),
-                              onPressed: () {},
+                              onPressed: () => _startCall(isVideo: false),
                               tooltip: 'Call',
                             ),
                             IconButton(
@@ -586,7 +1041,9 @@ class _UserChatPageState extends State<UserChatPage> {
                                   borderRadius: BorderRadius.circular(10),
                                   boxShadow: [
                                     BoxShadow(
-                                      color: Colors.purpleAccent.withOpacity(0.18),
+                                      color: Colors.purpleAccent.withOpacity(
+                                        0.18,
+                                      ),
                                       blurRadius: 8,
                                       offset: Offset(0, 2),
                                     ),
@@ -599,7 +1056,7 @@ class _UserChatPageState extends State<UserChatPage> {
                                   size: 28,
                                 ),
                               ),
-                              onPressed: () {},
+                              onPressed: () => _startCall(isVideo: true),
                               tooltip: 'Video Call',
                             ),
                           ],
@@ -621,7 +1078,14 @@ class _UserChatPageState extends State<UserChatPage> {
                                 child: CircularProgressIndicator(),
                               );
                             }
-                            final messages = snapshot.data ?? [];
+                            // Sort messages by timestamp ascending
+                            final messages = [...(snapshot.data ?? [])]
+                              ..sort(
+                                (a, b) => ((a['timestamp'] ?? 0).toDouble())
+                                    .compareTo(
+                                      (b['timestamp'] ?? 0).toDouble(),
+                                    ),
+                              );
                             WidgetsBinding.instance.addPostFrameCallback((_) {
                               if (_scrollController.hasClients) {
                                 _scrollController.jumpTo(
@@ -629,118 +1093,301 @@ class _UserChatPageState extends State<UserChatPage> {
                                 );
                               }
                             });
-                            return ListView.builder(
-                              controller: _scrollController,
-                              padding: const EdgeInsets.symmetric(
-                                vertical: 16,
-                                horizontal: 12,
-                              ),
-                              itemCount: messages.length,
-                              itemBuilder: (context, index) {
-                                final msg = messages[index];
-                                final senderStr = (msg['sender'] as String?)?.trim() ?? '';
-                                final isAI = senderStr.toLowerCase() == 'modifai';
-                                final isMe = !isAI && senderStr == senderDisplay;
-                                final senderName = isAI ? 'ModifAI' : _displayName(msg['sender']);
-                                if (isAI) {
-                                  return Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    crossAxisAlignment: CrossAxisAlignment.end,
-                                    children: [
-                                      Column(
-                                        children: [
-                                          CircleAvatar(
-                                            radius: 14,
-                                            backgroundColor: Colors.blueGrey[700],
-                                            backgroundImage: const AssetImage('assets/modifai_logo.png'),
-                                          ),
-                                          const SizedBox(height: 2),
-                                          const Text(
-                                            'ModifAI',
-                                            style: TextStyle(
-                                              color: Colors.purpleAccent,
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: 10,
+                            return AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 300),
+                              child: ListView.builder(
+                                key: ValueKey(messages.length),
+                                controller: _scrollController,
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 16,
+                                  horizontal: 12,
+                                ),
+                                itemCount: messages.length,
+                                itemBuilder: (context, index) {
+                                  final msg = messages[index];
+                                  final senderStr =
+                                      (msg['sender'] as String?)?.trim() ?? '';
+                                  final isAI =
+                                      senderStr.toLowerCase() == 'modifai';
+                                  final isMe =
+                                      !isAI &&
+                                      senderStr == _displayName(_senderName);
+                                  final senderName = isAI
+                                      ? 'ModifAI'
+                                      : _displayName(msg['sender']);
+                                  final timeStr = _formatTimestamp(
+                                    (msg['timestamp'] ?? 0).toDouble(),
+                                  );
+                                  String? imageToShow;
+                                  if (msg['image'] != null &&
+                                      (msg['image'] as String).isNotEmpty) {
+                                    imageToShow = msg['image'];
+                                  }
+                                  if (msg['audio'] != null &&
+                                      (msg['audio'] as String).isNotEmpty) {
+                                    // Audio message: time at the bottom, left for sent, right for received
+                                    return Row(
+                                      mainAxisAlignment: isMe
+                                          ? MainAxisAlignment.end
+                                          : MainAxisAlignment.start,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.end,
+                                      children: [
+                                        if (!isMe)
+                                          Padding(
+                                            padding: const EdgeInsets.only(
+                                              right: 8.0,
                                             ),
-                                          ),
-                                        ],
-                                      ),
-                                      const SizedBox(width: 6),
-                                      LayoutBuilder(
-                                        builder: (context, constraints) {
-                                          final maxBubbleWidth = MediaQuery.of(context).size.width * 0.7;
-                                          return Container(
-                                            margin: const EdgeInsets.symmetric(vertical: 1),
-                                            padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 6),
-                                            decoration: BoxDecoration(
-                                              color: Colors.grey[800],
-                                              borderRadius: const BorderRadius.only(
-                                                topLeft: Radius.circular(16),
-                                                topRight: Radius.circular(16),
-                                                bottomLeft: Radius.circular(16),
-                                                bottomRight: Radius.circular(4),
-                                              ),
-                                              boxShadow: [
-                                                BoxShadow(
-                                                  color: Colors.black.withOpacity(0.10),
-                                                  blurRadius: 6,
-                                                  offset: const Offset(0, 2),
+                                            child: Column(
+                                              children: [
+                                                CircleAvatar(
+                                                  backgroundColor:
+                                                      Colors.blueAccent,
+                                                  radius: 16,
+                                                  child: Text(
+                                                    senderName.isNotEmpty
+                                                        ? senderName[0]
+                                                              .toUpperCase()
+                                                        : '?',
+                                                    style: const TextStyle(
+                                                      color: Colors.white,
+                                                      fontSize: 14,
+                                                    ),
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 2),
+                                                Text(
+                                                  senderName,
+                                                  style: const TextStyle(
+                                                    color: Colors.white54,
+                                                    fontSize: 10,
+                                                  ),
                                                 ),
                                               ],
                                             ),
-                                            constraints: BoxConstraints(maxWidth: maxBubbleWidth),
-                                            child: Builder(
-                                              builder: (context) {
-                                                final hasImage = msg['image'] != null && (msg['image'] as String).isNotEmpty;
-                                                final hasText = (msg['text'] ?? '').toString().isNotEmpty;
-                                                if (hasImage) {
-                                                  return ImageWithAspect(
-                                                    imagePath: msg['image'],
-                                                    textWidget: hasText
-                                                        ? Padding(
-                                                            padding: const EdgeInsets.only(top: 6.0),
-                                                            child: _buildColoredText(msg['text'] ?? ''),
-                                                          )
-                                                        : null,
-                                                  );
-                                                } else if (hasText) {
-                                                  return _buildColoredText(msg['text'] ?? '');
-                                                } else {
-                                                  return const SizedBox.shrink();
-                                                }
-                                              },
+                                          ),
+                                        Column(
+                                          crossAxisAlignment: isMe
+                                              ? CrossAxisAlignment.start
+                                              : CrossAxisAlignment.end,
+                                          children: [
+                                            Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.end,
+                                              children: [
+                                                if (isMe)
+                                                  Padding(
+                                                    padding:
+                                                        const EdgeInsets.only(
+                                                          right: 6.0,
+                                                          top: 2,
+                                                        ),
+                                                    child: Text(
+                                                      timeStr,
+                                                      style: const TextStyle(
+                                                        fontSize: 10,
+                                                        color: Colors.white54,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                Container(
+                                                  margin:
+                                                      const EdgeInsets.symmetric(
+                                                        vertical: 4,
+                                                      ),
+                                                  padding:
+                                                      const EdgeInsets.symmetric(
+                                                        horizontal: 12,
+                                                        vertical: 8,
+                                                      ),
+                                                  decoration: BoxDecoration(
+                                                    color: isMe
+                                                        ? Colors.blueAccent
+                                                              .withOpacity(0.22)
+                                                        : Colors.orangeAccent
+                                                              .withOpacity(
+                                                                0.18,
+                                                              ),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          16,
+                                                        ),
+                                                  ),
+                                                  child: _AudioPlayerWidget(
+                                                    audioUrl: msg['audio'],
+                                                  ),
+                                                ),
+                                                if (!isMe)
+                                                  Padding(
+                                                    padding:
+                                                        const EdgeInsets.only(
+                                                          left: 6.0,
+                                                          top: 2,
+                                                        ),
+                                                    child: Text(
+                                                      timeStr,
+                                                      style: const TextStyle(
+                                                        fontSize: 10,
+                                                        color: Colors.white54,
+                                                      ),
+                                                    ),
+                                                  ),
+                                              ],
                                             ),
-                                          );
-                                        },
-                                      ),
-                                    ],
-                                  );
-                                }
-                                // User/group message (original UI)
-                                return Row(
-                                  mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
-                                  crossAxisAlignment: CrossAxisAlignment.end,
-                                  children: [
-                                    if (!isMe)
-                                      Padding(
-                                        padding: const EdgeInsets.only(right: 8.0),
-                                        child: Column(
+                                          ],
+                                        ),
+                                        if (isMe)
+                                          Padding(
+                                            padding: const EdgeInsets.only(
+                                              left: 8.0,
+                                            ),
+                                            child: Column(
+                                              children: [
+                                                CircleAvatar(
+                                                  backgroundColor:
+                                                      Colors.blueAccent,
+                                                  radius: 16,
+                                                  child: Text(
+                                                    senderName.isNotEmpty
+                                                        ? senderName[0]
+                                                              .toUpperCase()
+                                                        : '?',
+                                                    style: const TextStyle(
+                                                      color: Colors.white,
+                                                      fontSize: 14,
+                                                    ),
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 2),
+                                                Text(
+                                                  senderName,
+                                                  style: const TextStyle(
+                                                    color: Colors.white54,
+                                                    fontSize: 10,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                      ],
+                                    );
+                                  }
+                                  if (isAI) {
+                                    return Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.end,
+                                      children: [
+                                        Column(
                                           children: [
                                             CircleAvatar(
                                               radius: 14,
-                                              backgroundColor: Colors.blueAccent,
-                                              child: Text(
-                                                senderName.isNotEmpty ? senderName[0] : '?',
-                                                style: const TextStyle(
-                                                  color: Colors.white,
-                                                  fontWeight: FontWeight.bold,
-                                                  fontSize: 14,
-                                                ),
+                                              backgroundColor:
+                                                  Colors.blueGrey[700],
+                                              backgroundImage: const AssetImage(
+                                                'assets/modifai_logo.png',
                                               ),
                                             ),
                                             const SizedBox(height: 2),
+                                            const Text(
+                                              'ModifAI',
+                                              style: TextStyle(
+                                                color: Colors.purpleAccent,
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 10,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        const SizedBox(width: 6),
+                                        LayoutBuilder(
+                                          builder: (context, constraints) {
+                                            final maxBubbleWidth =
+                                                MediaQuery.of(
+                                                  context,
+                                                ).size.width *
+                                                0.7;
+                                            return Container(
+                                              margin:
+                                                  const EdgeInsets.symmetric(
+                                                    vertical: 1,
+                                                  ),
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    vertical: 2,
+                                                    horizontal: 6,
+                                                  ),
+                                              decoration: BoxDecoration(
+                                                color: Colors.grey[800],
+                                                borderRadius:
+                                                    const BorderRadius.only(
+                                                      topLeft: Radius.circular(
+                                                        16,
+                                                      ),
+                                                      topRight: Radius.circular(
+                                                        16,
+                                                      ),
+                                                      bottomLeft:
+                                                          Radius.circular(16),
+                                                      bottomRight:
+                                                          Radius.circular(4),
+                                                    ),
+                                                boxShadow: [
+                                                  BoxShadow(
+                                                    color: Colors.black
+                                                        .withOpacity(0.10),
+                                                    blurRadius: 6,
+                                                    offset: const Offset(0, 2),
+                                                  ),
+                                                ],
+                                              ),
+                                              constraints: BoxConstraints(
+                                                maxWidth: maxBubbleWidth,
+                                              ),
+                                              child: Builder(
+                                                builder: (context) {
+                                                  final hasImage =
+                                                      msg['image'] != null &&
+                                                      (msg['image'] as String)
+                                                          .isNotEmpty;
+                                                  final hasText =
+                                                      (msg['text'] ?? '')
+                                                          .toString()
+                                                          .isNotEmpty;
+                                                  if (hasImage) {
+                                                    return ImageWithAspect(
+                                                      imagePath: msg['image'],
+                                                      textWidget: hasText
+                                                          ? Padding(
+                                                              padding:
+                                                                  const EdgeInsets.only(
+                                                                    top: 6.0,
+                                                                  ),
+                                                              child:
+                                                                  _buildColoredText(
+                                                                    msg['text'] ??
+                                                                        '',
+                                                                  ),
+                                                            )
+                                                          : null,
+                                                    );
+                                                  } else if (hasText) {
+                                                    return _buildColoredText(
+                                                      msg['text'] ?? '',
+                                                    );
+                                                  } else {
+                                                    return const SizedBox.shrink();
+                                                  }
+                                                },
+                                              ),
+                                            );
+                                          },
+                                        ),
+                                        Column(
+                                          children: [
                                             Text(
-                                              senderName,
+                                              timeStr,
                                               style: const TextStyle(
                                                 color: Colors.white54,
                                                 fontSize: 10,
@@ -748,84 +1395,204 @@ class _UserChatPageState extends State<UserChatPage> {
                                             ),
                                           ],
                                         ),
-                                      ),
-                                    LayoutBuilder(
-                                      builder: (context, constraints) {
-                                        final maxBubbleWidth = MediaQuery.of(context).size.width * 0.7;
-                                        return Container(
-                                          margin: const EdgeInsets.symmetric(vertical: 2),
-                                          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 10),
-                                          decoration: BoxDecoration(
-                                            color: isMe
-                                                ? Colors.blueAccent.withOpacity(0.22)
-                                                : Colors.grey[800],
-                                            borderRadius: BorderRadius.only(
-                                              topLeft: const Radius.circular(16),
-                                              topRight: const Radius.circular(16),
-                                              bottomLeft: isMe ? const Radius.circular(16) : const Radius.circular(4),
-                                              bottomRight: isMe ? const Radius.circular(4) : const Radius.circular(16),
-                                            ),
-                                            boxShadow: [
-                                              BoxShadow(
-                                                color: Colors.black.withOpacity(0.10),
-                                                blurRadius: 6,
-                                                offset: const Offset(0, 2),
+                                      ],
+                                    );
+                                  }
+                                  // User/group message (original UI)
+                                  return Row(
+                                    mainAxisAlignment: isMe
+                                        ? MainAxisAlignment.end
+                                        : MainAxisAlignment.start,
+                                    crossAxisAlignment: CrossAxisAlignment.end,
+                                    children: [
+                                      if (!isMe)
+                                        Padding(
+                                          padding: const EdgeInsets.only(
+                                            right: 8.0,
+                                          ),
+                                          child: Column(
+                                            children: [
+                                              CircleAvatar(
+                                                radius: 14,
+                                                backgroundColor:
+                                                    Colors.blueAccent,
+                                                child: Text(
+                                                  senderName.isNotEmpty
+                                                      ? senderName[0]
+                                                      : '?',
+                                                  style: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontWeight: FontWeight.bold,
+                                                    fontSize: 14,
+                                                  ),
+                                                ),
+                                              ),
+                                              const SizedBox(height: 2),
+                                              Text(
+                                                senderName,
+                                                style: const TextStyle(
+                                                  color: Colors.white54,
+                                                  fontSize: 10,
+                                                ),
                                               ),
                                             ],
                                           ),
-                                          constraints: BoxConstraints(maxWidth: maxBubbleWidth),
-                                          child: Builder(
-                                            builder: (context) {
-                                              final hasImage = msg['image'] != null && (msg['image'] as String).isNotEmpty;
-                                              final hasText = (msg['text'] ?? '').toString().isNotEmpty;
-                                              if (hasImage) {
-                                                return ImageWithAspect(
-                                                  imagePath: msg['image'],
-                                                  textWidget: hasText
-                                                      ? _buildColoredText(msg['text'] ?? '')
-                                                      : null,
-                                                );
-                                              } else if (hasText) {
-                                                return _buildColoredText(msg['text'] ?? '');
-                                              } else {
-                                                return const SizedBox.shrink();
-                                              }
+                                        ),
+                                      Column(
+                                        crossAxisAlignment: isMe
+                                            ? CrossAxisAlignment.end
+                                            : CrossAxisAlignment.start,
+                                        children: [
+                                          Padding(
+                                            padding: EdgeInsets.only(
+                                              left: isMe ? 0 : 4,
+                                              right: isMe ? 4 : 0,
+                                              bottom: 2,
+                                            ),
+                                            child: Text(
+                                              timeStr,
+                                              style: const TextStyle(
+                                                fontSize: 10,
+                                                color: Colors.white54,
+                                              ),
+                                            ),
+                                          ),
+                                          LayoutBuilder(
+                                            builder: (context, constraints) {
+                                              final maxBubbleWidth =
+                                                  MediaQuery.of(
+                                                    context,
+                                                  ).size.width *
+                                                  0.7;
+                                              return Container(
+                                                margin:
+                                                    const EdgeInsets.symmetric(
+                                                      vertical: 2,
+                                                    ),
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 10,
+                                                    ),
+                                                decoration: BoxDecoration(
+                                                  color: isMe
+                                                      ? Colors.blueAccent
+                                                            .withOpacity(0.22)
+                                                      : Colors.grey[800],
+                                                  borderRadius: isMe
+                                                      ? const BorderRadius.only(
+                                                          topLeft:
+                                                              Radius.circular(
+                                                                16,
+                                                              ),
+                                                          topRight:
+                                                              Radius.circular(
+                                                                16,
+                                                              ),
+                                                          bottomLeft:
+                                                              Radius.circular(
+                                                                16,
+                                                              ),
+                                                          bottomRight:
+                                                              Radius.circular(
+                                                                4,
+                                                              ),
+                                                        )
+                                                      : const BorderRadius.only(
+                                                          topLeft:
+                                                              Radius.circular(
+                                                                16,
+                                                              ),
+                                                          topRight:
+                                                              Radius.circular(
+                                                                16,
+                                                              ),
+                                                          bottomLeft:
+                                                              Radius.circular(
+                                                                4,
+                                                              ),
+                                                          bottomRight:
+                                                              Radius.circular(
+                                                                16,
+                                                              ),
+                                                        ),
+                                                ),
+                                                constraints: BoxConstraints(
+                                                  maxWidth: maxBubbleWidth,
+                                                ),
+                                                child: Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
+                                                    if (imageToShow != null)
+                                                      Padding(
+                                                        padding:
+                                                            const EdgeInsets.only(
+                                                              top: 4,
+                                                              bottom: 4,
+                                                            ),
+                                                        child: ImageWithAspect(
+                                                          imagePath:
+                                                              imageToShow,
+                                                        ),
+                                                      ),
+                                                    if (msg['text'] != null &&
+                                                        (msg['text'] as String)
+                                                            .isNotEmpty)
+                                                      Padding(
+                                                        padding:
+                                                            const EdgeInsets.only(
+                                                              top: 2,
+                                                              bottom: 2,
+                                                            ),
+                                                        child:
+                                                            _buildColoredText(
+                                                              msg['text'] ?? '',
+                                                            ),
+                                                      ),
+                                                  ],
+                                                ),
+                                              );
                                             },
                                           ),
-                                        );
-                                      },
-                                    ),
-                                    if (isMe)
-                                      Padding(
-                                        padding: const EdgeInsets.only(left: 8.0),
-                                        child: Column(
-                                          children: [
-                                            CircleAvatar(
-                                              radius: 14,
-                                              backgroundColor: Colors.blueAccent,
-                                              child: Text(
-                                                senderName.isNotEmpty ? senderName[0] : '?',
-                                                style: const TextStyle(
-                                                  color: Colors.white,
-                                                  fontWeight: FontWeight.bold,
-                                                  fontSize: 14,
+                                        ],
+                                      ),
+                                      if (isMe)
+                                        Padding(
+                                          padding: const EdgeInsets.only(
+                                            left: 8.0,
+                                          ),
+                                          child: Column(
+                                            children: [
+                                              CircleAvatar(
+                                                radius: 14,
+                                                backgroundColor:
+                                                    Colors.blueAccent,
+                                                child: Text(
+                                                  senderName.isNotEmpty
+                                                      ? senderName[0]
+                                                      : '?',
+                                                  style: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontWeight: FontWeight.bold,
+                                                    fontSize: 14,
+                                                  ),
                                                 ),
                                               ),
-                                            ),
-                                            const SizedBox(height: 2),
-                                            Text(
-                                              senderName,
-                                              style: const TextStyle(
-                                                color: Colors.white54,
-                                                fontSize: 10,
+                                              const SizedBox(height: 2),
+                                              Text(
+                                                senderName,
+                                                style: const TextStyle(
+                                                  color: Colors.white54,
+                                                  fontSize: 10,
+                                                ),
                                               ),
-                                            ),
-                                          ],
+                                            ],
+                                          ),
                                         ),
-                                      ),
-                                  ],
-                                );
-                              },
+                                    ],
+                                  );
+                                },
+                              ),
                             );
                           },
                         )
@@ -844,7 +1611,14 @@ class _UserChatPageState extends State<UserChatPage> {
                                 child: CircularProgressIndicator(),
                               );
                             }
-                            final messages = snapshot.data ?? [];
+                            // Sort messages by timestamp ascending
+                            final messages = [...(snapshot.data ?? [])]
+                              ..sort(
+                                (a, b) => ((a['timestamp'] ?? 0).toDouble())
+                                    .compareTo(
+                                      (b['timestamp'] ?? 0).toDouble(),
+                                    ),
+                              );
                             WidgetsBinding.instance.addPostFrameCallback((_) {
                               if (_scrollController.hasClients) {
                                 _scrollController.jumpTo(
@@ -852,67 +1626,201 @@ class _UserChatPageState extends State<UserChatPage> {
                                 );
                               }
                             });
-                            return ListView.builder(
-                              controller: _scrollController,
-                              padding: const EdgeInsets.symmetric(
-                                vertical: 16,
-                                horizontal: 12,
-                              ),
-                              itemCount: messages.length,
-                              itemBuilder: (context, index) {
-                                final msg = messages[index];
-                                final senderStr = (msg['sender'] as String?)?.trim() ?? '';
-                                final isAI = senderStr.toLowerCase() == 'modifai';
-                                final isMe = !isAI && senderStr == senderDisplay;
-                                return Row(
-                                  mainAxisAlignment: isMe
-                                      ? MainAxisAlignment.end
-                                      : MainAxisAlignment.start,
-                                  crossAxisAlignment: CrossAxisAlignment.end,
-                                  children: [
-                                    if (!isMe && !isAI)
-                                      Padding(
-                                        padding: const EdgeInsets.only(
-                                          right: 8.0,
-                                        ),
-                                        child: Column(
-                                          children: [
-                                            CircleAvatar(
-                                              radius: 14,
-                                              backgroundColor: Colors.blueAccent,
-                                              child: Text(
-                                                receiverDisplay.isNotEmpty
-                                                    ? receiverDisplay[0]
-                                                    : '?',
-                                                style: const TextStyle(
-                                                  color: Colors.white,
-                                                  fontWeight: FontWeight.bold,
-                                                  fontSize: 14,
-                                                ),
-                                              ),
+                            return AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 300),
+                              child: ListView.builder(
+                                key: ValueKey(messages.length),
+                                controller: _scrollController,
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 16,
+                                  horizontal: 12,
+                                ),
+                                itemCount: messages.length,
+                                itemBuilder: (context, index) {
+                                  final msg = messages[index];
+                                  final senderStr =
+                                      (msg['sender'] as String?)?.trim() ?? '';
+                                  final isAI =
+                                      senderStr.toLowerCase() == 'modifai';
+                                  final isMe =
+                                      !isAI &&
+                                      senderStr == _displayName(_senderName);
+                                  final senderName = isAI
+                                      ? 'ModifAI'
+                                      : _displayName(msg['sender']);
+                                  final timeStr = _formatTimestamp(
+                                    (msg['timestamp'] ?? 0).toDouble(),
+                                  );
+                                  String? imageToShow;
+                                  if (msg['image'] != null &&
+                                      (msg['image'] as String).isNotEmpty) {
+                                    imageToShow = msg['image'];
+                                  }
+                                  if (msg['audio'] != null &&
+                                      (msg['audio'] as String).isNotEmpty) {
+                                    // Audio message: time at the bottom, left for sent, right for received
+                                    return Row(
+                                      mainAxisAlignment: isMe
+                                          ? MainAxisAlignment.end
+                                          : MainAxisAlignment.start,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.end,
+                                      children: [
+                                        if (!isMe)
+                                          Padding(
+                                            padding: const EdgeInsets.only(
+                                              right: 8.0,
                                             ),
-                                            const SizedBox(height: 2),
-                                            Text(
-                                              receiverDisplay,
-                                              style: const TextStyle(
-                                                color: Colors.white54,
-                                                fontSize: 10,
-                                              ),
+                                            child: Column(
+                                              children: [
+                                                CircleAvatar(
+                                                  backgroundColor:
+                                                      Colors.blueAccent,
+                                                  radius: 16,
+                                                  child: Text(
+                                                    senderName.isNotEmpty
+                                                        ? senderName[0]
+                                                              .toUpperCase()
+                                                        : '?',
+                                                    style: const TextStyle(
+                                                      color: Colors.white,
+                                                      fontSize: 14,
+                                                    ),
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 2),
+                                                Text(
+                                                  senderName,
+                                                  style: const TextStyle(
+                                                    color: Colors.white54,
+                                                    fontSize: 10,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        Column(
+                                          crossAxisAlignment: isMe
+                                              ? CrossAxisAlignment.start
+                                              : CrossAxisAlignment.end,
+                                          children: [
+                                            Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.end,
+                                              children: [
+                                                if (isMe)
+                                                  Padding(
+                                                    padding:
+                                                        const EdgeInsets.only(
+                                                          right: 6.0,
+                                                          top: 2,
+                                                        ),
+                                                    child: Text(
+                                                      timeStr,
+                                                      style: const TextStyle(
+                                                        fontSize: 10,
+                                                        color: Colors.white54,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                Container(
+                                                  margin:
+                                                      const EdgeInsets.symmetric(
+                                                        vertical: 4,
+                                                      ),
+                                                  padding:
+                                                      const EdgeInsets.symmetric(
+                                                        horizontal: 12,
+                                                        vertical: 8,
+                                                      ),
+                                                  decoration: BoxDecoration(
+                                                    color: isMe
+                                                        ? Colors.blueAccent
+                                                              .withOpacity(0.22)
+                                                        : Colors.orangeAccent
+                                                              .withOpacity(
+                                                                0.18,
+                                                              ),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          16,
+                                                        ),
+                                                  ),
+                                                  child: _AudioPlayerWidget(
+                                                    audioUrl: msg['audio'],
+                                                  ),
+                                                ),
+                                                if (!isMe)
+                                                  Padding(
+                                                    padding:
+                                                        const EdgeInsets.only(
+                                                          left: 6.0,
+                                                          top: 2,
+                                                        ),
+                                                    child: Text(
+                                                      timeStr,
+                                                      style: const TextStyle(
+                                                        fontSize: 10,
+                                                        color: Colors.white54,
+                                                      ),
+                                                    ),
+                                                  ),
+                                              ],
                                             ),
                                           ],
                                         ),
-                                      ),
-                                    if (isAI)
-                                      Padding(
-                                        padding: const EdgeInsets.only(
-                                          right: 8.0,
-                                        ),
-                                        child: Column(
+                                        if (isMe)
+                                          Padding(
+                                            padding: const EdgeInsets.only(
+                                              left: 8.0,
+                                            ),
+                                            child: Column(
+                                              children: [
+                                                CircleAvatar(
+                                                  backgroundColor:
+                                                      Colors.blueAccent,
+                                                  radius: 16,
+                                                  child: Text(
+                                                    senderName.isNotEmpty
+                                                        ? senderName[0]
+                                                              .toUpperCase()
+                                                        : '?',
+                                                    style: const TextStyle(
+                                                      color: Colors.white,
+                                                      fontSize: 14,
+                                                    ),
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 2),
+                                                Text(
+                                                  senderName,
+                                                  style: const TextStyle(
+                                                    color: Colors.white54,
+                                                    fontSize: 10,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                      ],
+                                    );
+                                  }
+                                  if (isAI) {
+                                    return Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.end,
+                                      children: [
+                                        Column(
                                           children: [
                                             CircleAvatar(
                                               radius: 14,
-                                              backgroundColor: Colors.blueGrey[700],
-                                              backgroundImage: const AssetImage('assets/modifai_logo.png'),
+                                              backgroundColor:
+                                                  Colors.blueGrey[700],
+                                              backgroundImage: const AssetImage(
+                                                'assets/modifai_logo.png',
+                                              ),
                                             ),
                                             const SizedBox(height: 2),
                                             const Text(
@@ -925,102 +1833,94 @@ class _UserChatPageState extends State<UserChatPage> {
                                             ),
                                           ],
                                         ),
-                                      ),
-                                    LayoutBuilder(
-                                      builder: (context, constraints) {
-                                        final maxBubbleWidth = MediaQuery.of(context).size.width * 0.7;
-                                        return Container(
-                                          margin: const EdgeInsets.symmetric(vertical: 1),
-                                          padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 6),
-                                          decoration: BoxDecoration(
-                                            color: isAI
-                                                ? Colors.purpleAccent.withOpacity(0.18)
-                                                : isMe
-                                                    ? Colors.blueAccent.withOpacity(0.22)
-                                                    : Colors.grey[800],
-                                            borderRadius: BorderRadius.only(
-                                              topLeft: const Radius.circular(18),
-                                              topRight: const Radius.circular(18),
-                                              bottomLeft: isMe || isAI ? const Radius.circular(18) : const Radius.circular(4),
-                                              bottomRight: isMe ? const Radius.circular(4) : const Radius.circular(18),
-                                            ),
-                                            boxShadow: [
-                                              BoxShadow(
-                                                color: Colors.black.withOpacity(
-                                                  0.10,
-                                                ),
-                                                blurRadius: 6,
-                                                offset: const Offset(0, 2),
-                                              ),
-                                            ],
-                                          ),
-                                          constraints: BoxConstraints(maxWidth: maxBubbleWidth),
-                                          child: Builder(
-                                            builder: (context) {
-                                              final hasImage =
-                                                  msg['image'] != null &&
-                                                  (msg['image'] as String)
-                                                      .isNotEmpty;
-                                              final hasText = (msg['text'] ?? '')
-                                                  .toString()
-                                                  .isNotEmpty;
-                                              if (hasImage) {
-                                                return ImageWithAspect(
-                                                  imagePath: msg['image'],
-                                                  textWidget: hasText
-                                                      ? Text(
-                                                          msg['text'] ?? '',
-                                                          style: const TextStyle(
-                                                            fontSize: 16,
-                                                          ),
-                                                        )
-                                                      : null,
-                                                );
-                                              } else if (hasText) {
-                                                return Padding(
-                                                  padding:
-                                                      const EdgeInsets.symmetric(
-                                                        vertical: 8,
-                                                        horizontal: 12,
-                                                      ),
-                                                  child: Text(
-                                                    msg['text'] ?? '',
-                                                    style: const TextStyle(
-                                                      fontSize: 16,
-                                                      color: Colors.white,
-                                                    ),
+                                        const SizedBox(width: 6),
+                                        LayoutBuilder(
+                                          builder: (context, constraints) {
+                                            final maxBubbleWidth =
+                                                MediaQuery.of(
+                                                  context,
+                                                ).size.width *
+                                                0.7;
+                                            return Container(
+                                              margin:
+                                                  const EdgeInsets.symmetric(
+                                                    vertical: 1,
                                                   ),
-                                                );
-                                              } else {
-                                                return const SizedBox.shrink();
-                                              }
-                                            },
-                                          ),
-                                        );
-                                      },
-                                    ),
-                                    if (isMe)
-                                      Padding(
-                                        padding: const EdgeInsets.only(
-                                          left: 8.0,
-                                        ),
-                                        child: Column(
-                                          children: [
-                                            CircleAvatar(
-                                              radius: 14,
-                                              backgroundColor: Colors.blueAccent,
-                                              child: Text(
-                                                senderDisplay.isNotEmpty ? senderDisplay[0] : '?',
-                                                style: const TextStyle(
-                                                  color: Colors.white,
-                                                  fontWeight: FontWeight.bold,
-                                                  fontSize: 14,
-                                                ),
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    vertical: 2,
+                                                    horizontal: 6,
+                                                  ),
+                                              decoration: BoxDecoration(
+                                                color: Colors.grey[800],
+                                                borderRadius:
+                                                    const BorderRadius.only(
+                                                      topLeft: Radius.circular(
+                                                        16,
+                                                      ),
+                                                      topRight: Radius.circular(
+                                                        16,
+                                                      ),
+                                                      bottomLeft:
+                                                          Radius.circular(16),
+                                                      bottomRight:
+                                                          Radius.circular(4),
+                                                    ),
+                                                boxShadow: [
+                                                  BoxShadow(
+                                                    color: Colors.black
+                                                        .withOpacity(0.10),
+                                                    blurRadius: 6,
+                                                    offset: const Offset(0, 2),
+                                                  ),
+                                                ],
                                               ),
-                                            ),
-                                            const SizedBox(height: 2),
+                                              constraints: BoxConstraints(
+                                                maxWidth: maxBubbleWidth,
+                                              ),
+                                              child: Builder(
+                                                builder: (context) {
+                                                  final hasImage =
+                                                      msg['image'] != null &&
+                                                      (msg['image'] as String)
+                                                          .isNotEmpty;
+                                                  final hasText =
+                                                      (msg['text'] ?? '')
+                                                          .toString()
+                                                          .isNotEmpty;
+                                                  if (hasImage) {
+                                                    return ImageWithAspect(
+                                                      imagePath: msg['image'],
+                                                      textWidget: hasText
+                                                          ? Padding(
+                                                              padding:
+                                                                  const EdgeInsets.only(
+                                                                    top: 6.0,
+                                                                  ),
+                                                              child:
+                                                                  _buildColoredText(
+                                                                    msg['text'] ??
+                                                                        '',
+                                                                  ),
+                                                            )
+                                                          : null,
+                                                    );
+                                                  } else if (hasText) {
+                                                    return _buildColoredText(
+                                                      msg['text'] ?? '',
+                                                    );
+                                                  } else {
+                                                    return const SizedBox.shrink();
+                                                  }
+                                                },
+                                              ),
+                                            );
+                                          },
+                                        ),
+                                        Column(
+                                          children: [
                                             Text(
-                                              senderDisplay,
+                                              timeStr,
                                               style: const TextStyle(
                                                 color: Colors.white54,
                                                 fontSize: 10,
@@ -1028,10 +1928,204 @@ class _UserChatPageState extends State<UserChatPage> {
                                             ),
                                           ],
                                         ),
+                                      ],
+                                    );
+                                  }
+                                  // User/group message (original UI)
+                                  return Row(
+                                    mainAxisAlignment: isMe
+                                        ? MainAxisAlignment.end
+                                        : MainAxisAlignment.start,
+                                    crossAxisAlignment: CrossAxisAlignment.end,
+                                    children: [
+                                      if (!isMe)
+                                        Padding(
+                                          padding: const EdgeInsets.only(
+                                            right: 8.0,
+                                          ),
+                                          child: Column(
+                                            children: [
+                                              CircleAvatar(
+                                                radius: 14,
+                                                backgroundColor:
+                                                    Colors.blueAccent,
+                                                child: Text(
+                                                  senderName.isNotEmpty
+                                                      ? senderName[0]
+                                                      : '?',
+                                                  style: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontWeight: FontWeight.bold,
+                                                    fontSize: 14,
+                                                  ),
+                                                ),
+                                              ),
+                                              const SizedBox(height: 2),
+                                              Text(
+                                                senderName,
+                                                style: const TextStyle(
+                                                  color: Colors.white54,
+                                                  fontSize: 10,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      Column(
+                                        crossAxisAlignment: isMe
+                                            ? CrossAxisAlignment.end
+                                            : CrossAxisAlignment.start,
+                                        children: [
+                                          Padding(
+                                            padding: EdgeInsets.only(
+                                              left: isMe ? 0 : 4,
+                                              right: isMe ? 4 : 0,
+                                              bottom: 2,
+                                            ),
+                                            child: Text(
+                                              timeStr,
+                                              style: const TextStyle(
+                                                fontSize: 10,
+                                                color: Colors.white54,
+                                              ),
+                                            ),
+                                          ),
+                                          LayoutBuilder(
+                                            builder: (context, constraints) {
+                                              final maxBubbleWidth =
+                                                  MediaQuery.of(
+                                                    context,
+                                                  ).size.width *
+                                                  0.7;
+                                              return Container(
+                                                margin:
+                                                    const EdgeInsets.symmetric(
+                                                      vertical: 2,
+                                                    ),
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 10,
+                                                    ),
+                                                decoration: BoxDecoration(
+                                                  color: isMe
+                                                      ? Colors.blueAccent
+                                                            .withOpacity(0.22)
+                                                      : Colors.grey[800],
+                                                  borderRadius: isMe
+                                                      ? const BorderRadius.only(
+                                                          topLeft:
+                                                              Radius.circular(
+                                                                16,
+                                                              ),
+                                                          topRight:
+                                                              Radius.circular(
+                                                                16,
+                                                              ),
+                                                          bottomLeft:
+                                                              Radius.circular(
+                                                                16,
+                                                              ),
+                                                          bottomRight:
+                                                              Radius.circular(
+                                                                4,
+                                                              ),
+                                                        )
+                                                      : const BorderRadius.only(
+                                                          topLeft:
+                                                              Radius.circular(
+                                                                16,
+                                                              ),
+                                                          topRight:
+                                                              Radius.circular(
+                                                                16,
+                                                              ),
+                                                          bottomLeft:
+                                                              Radius.circular(
+                                                                4,
+                                                              ),
+                                                          bottomRight:
+                                                              Radius.circular(
+                                                                16,
+                                                              ),
+                                                        ),
+                                                ),
+                                                constraints: BoxConstraints(
+                                                  maxWidth: maxBubbleWidth,
+                                                ),
+                                                child: Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
+                                                    if (imageToShow != null)
+                                                      Padding(
+                                                        padding:
+                                                            const EdgeInsets.only(
+                                                              top: 4,
+                                                              bottom: 4,
+                                                            ),
+                                                        child: ImageWithAspect(
+                                                          imagePath:
+                                                              imageToShow,
+                                                        ),
+                                                      ),
+                                                    if (msg['text'] != null &&
+                                                        (msg['text'] as String)
+                                                            .isNotEmpty)
+                                                      Padding(
+                                                        padding:
+                                                            const EdgeInsets.only(
+                                                              top: 2,
+                                                              bottom: 2,
+                                                            ),
+                                                        child:
+                                                            _buildColoredText(
+                                                              msg['text'] ?? '',
+                                                            ),
+                                                      ),
+                                                  ],
+                                                ),
+                                              );
+                                            },
+                                          ),
+                                        ],
                                       ),
-                                  ],
-                                );
-                              },
+                                      if (isMe)
+                                        Padding(
+                                          padding: const EdgeInsets.only(
+                                            left: 8.0,
+                                          ),
+                                          child: Column(
+                                            children: [
+                                              CircleAvatar(
+                                                radius: 14,
+                                                backgroundColor:
+                                                    Colors.blueAccent,
+                                                child: Text(
+                                                  senderName.isNotEmpty
+                                                      ? senderName[0]
+                                                      : '?',
+                                                  style: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontWeight: FontWeight.bold,
+                                                    fontSize: 14,
+                                                  ),
+                                                ),
+                                              ),
+                                              const SizedBox(height: 2),
+                                              Text(
+                                                senderName,
+                                                style: const TextStyle(
+                                                  color: Colors.white54,
+                                                  fontSize: 10,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                    ],
+                                  );
+                                },
+                              ),
                             );
                           },
                         ),
@@ -1119,10 +2213,7 @@ class _UserChatPageState extends State<UserChatPage> {
                               children: [
                                 if (_pickedImagePath != null)
                                   Padding(
-                                    padding: const EdgeInsets.only(
-                                      bottom: 4.0,
-                                      top: 4.0,
-                                    ),
+                                    padding: const EdgeInsets.only(top: 4.0),
                                     child: Stack(
                                       alignment: Alignment.topRight,
                                       children: [
@@ -1156,6 +2247,8 @@ class _UserChatPageState extends State<UserChatPage> {
                                       ],
                                     ),
                                   ),
+                                if (_pickedAudioPath != null)
+                                  _buildAudioPreview(),
                                 SizedBox(
                                   height: 48,
                                   child: Stack(
@@ -1181,14 +2274,21 @@ class _UserChatPageState extends State<UserChatPage> {
                                         minLines: 1,
                                         maxLines: 1,
                                         onChanged: (val) {
-                                          final wasShowing = _showingAtSuggestion;
-                                          _showingAtSuggestion = val.endsWith('@');
-                                          if (wasShowing != _showingAtSuggestion) setState(() {});
+                                          final wasShowing =
+                                              _showingAtSuggestion;
+                                          _showingAtSuggestion = val.endsWith(
+                                            '@',
+                                          );
+                                          if (wasShowing !=
+                                              _showingAtSuggestion)
+                                            setState(() {});
                                         },
                                         onTap: () {
                                           // Show suggestion if cursor is after @
                                           final text = _msgController.text;
-                                          _showingAtSuggestion = text.endsWith('@');
+                                          _showingAtSuggestion = text.endsWith(
+                                            '@',
+                                          );
                                           setState(() {});
                                         },
                                       ),
@@ -1199,19 +2299,31 @@ class _UserChatPageState extends State<UserChatPage> {
                                           child: Material(
                                             color: Colors.grey[900],
                                             elevation: 4,
-                                            borderRadius: BorderRadius.circular(8),
+                                            borderRadius: BorderRadius.circular(
+                                              8,
+                                            ),
                                             child: InkWell(
-                                              borderRadius: BorderRadius.circular(8),
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
                                               onTap: () {
-                                                _msgController.text = '@askmodifai ';
-                                                _msgController.selection = TextSelection.fromPosition(
-                                                  TextPosition(offset: _msgController.text.length),
-                                                );
+                                                _msgController.text =
+                                                    '@askmodifai ';
+                                                _msgController.selection =
+                                                    TextSelection.fromPosition(
+                                                      TextPosition(
+                                                        offset: _msgController
+                                                            .text
+                                                            .length,
+                                                      ),
+                                                    );
                                                 _showingAtSuggestion = false;
                                                 setState(() {});
                                               },
                                               child: const Padding(
-                                                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                                                padding: EdgeInsets.symmetric(
+                                                  horizontal: 16,
+                                                  vertical: 10,
+                                                ),
                                                 child: Text(
                                                   '@askmodifai',
                                                   style: TextStyle(
@@ -1244,6 +2356,7 @@ class _UserChatPageState extends State<UserChatPage> {
                     ],
                   ),
                 ),
+                if (_showRecordingDialog) _buildRecordingDialog(),
               ],
             ),
           ),
@@ -1276,7 +2389,14 @@ class _AIChatDialogState extends State<_AIChatDialog> {
     ];
     if (widget.initialPrompt.trim().length > 12) {
       // If user typed a prompt after @askmodifai, send it immediately
-      Future.delayed(Duration(milliseconds: 300), () => _sendAI(widget.initialPrompt.replaceFirst(RegExp(r'^@askmodifai', caseSensitive: false), '').trim()));
+      Future.delayed(
+        Duration(milliseconds: 300),
+        () => _sendAI(
+          widget.initialPrompt
+              .replaceFirst(RegExp(r'^@askmodifai', caseSensitive: false), '')
+              .trim(),
+        ),
+      );
     }
   }
 
@@ -1327,9 +2447,20 @@ class _AIChatDialogState extends State<_AIChatDialog> {
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               child: Row(
                 children: [
-                  const Icon(Icons.smart_toy, color: Colors.purpleAccent, size: 28),
+                  const Icon(
+                    Icons.smart_toy,
+                    color: Colors.purpleAccent,
+                    size: 28,
+                  ),
                   const SizedBox(width: 10),
-                  const Text('ModifAI Assistant', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
+                  const Text(
+                    'ModifAI Assistant',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                    ),
+                  ),
                   const Spacer(),
                   IconButton(
                     icon: const Icon(Icons.close, color: Colors.white),
@@ -1347,18 +2478,30 @@ class _AIChatDialogState extends State<_AIChatDialog> {
                   final msg = _aiMessages[idx];
                   final isUser = msg['sender'] == 'user';
                   return Container(
-                    alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-                    margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+                    alignment: isUser
+                        ? Alignment.centerRight
+                        : Alignment.centerLeft,
+                    margin: const EdgeInsets.symmetric(
+                      vertical: 6,
+                      horizontal: 12,
+                    ),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 10,
+                        horizontal: 14,
+                      ),
                       decoration: BoxDecoration(
-                        color: isUser ? Colors.blueAccent.withOpacity(0.22) : Colors.purpleAccent.withOpacity(0.18),
+                        color: isUser
+                            ? Colors.blueAccent.withOpacity(0.22)
+                            : Colors.purpleAccent.withOpacity(0.18),
                         borderRadius: BorderRadius.circular(14),
                       ),
                       child: Text(
                         msg['text'] ?? '',
                         style: TextStyle(
-                          color: isUser ? Colors.white : Colors.purpleAccent.shade100,
+                          color: isUser
+                              ? Colors.white
+                              : Colors.purpleAccent.shade100,
                           fontSize: 16,
                         ),
                       ),
@@ -1384,7 +2527,10 @@ class _AIChatDialogState extends State<_AIChatDialog> {
                         hintText: 'Ask something, or type /summarize',
                         hintStyle: TextStyle(color: Colors.white54),
                         border: InputBorder.none,
-                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
                       ),
                       minLines: 1,
                       maxLines: 2,
@@ -1395,7 +2541,10 @@ class _AIChatDialogState extends State<_AIChatDialog> {
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.send_rounded, color: Colors.lightBlueAccent),
+                    icon: const Icon(
+                      Icons.send_rounded,
+                      color: Colors.lightBlueAccent,
+                    ),
                     onPressed: _loading
                         ? null
                         : () {
@@ -1405,27 +2554,44 @@ class _AIChatDialogState extends State<_AIChatDialog> {
                           },
                   ),
                   IconButton(
-                    icon: const Icon(Icons.summarize, color: Colors.orangeAccent),
+                    icon: const Icon(
+                      Icons.summarize,
+                      color: Colors.orangeAccent,
+                    ),
                     tooltip: 'Summarize this chat',
                     onPressed: _loading
                         ? null
                         : () async {
                             // Summarize the chat history
-                            final chatText = widget.chatHistory.map((m) => m['text']).whereType<String>().join('\n');
+                            final chatText = widget.chatHistory
+                                .map((m) => m['text'])
+                                .whereType<String>()
+                                .join('\n');
                             if (chatText.isEmpty) return;
                             setState(() {
-                              _aiMessages.add({'sender': 'user', 'text': '[Summarize the chat]'});
+                              _aiMessages.add({
+                                'sender': 'user',
+                                'text': '[Summarize the chat]',
+                              });
                               _loading = true;
                             });
                             try {
-                              final reply = await ApiService.getChatbotReply('Summarize this chat: $chatText');
+                              final reply = await ApiService.getChatbotReply(
+                                'Summarize this chat: $chatText',
+                              );
                               setState(() {
-                                _aiMessages.add({'sender': 'ai', 'text': reply});
+                                _aiMessages.add({
+                                  'sender': 'ai',
+                                  'text': reply,
+                                });
                                 _loading = false;
                               });
                             } catch (e) {
                               setState(() {
-                                _aiMessages.add({'sender': 'ai', 'text': 'AI error: $e'});
+                                _aiMessages.add({
+                                  'sender': 'ai',
+                                  'text': 'AI error: $e',
+                                });
                                 _loading = false;
                               });
                             }
@@ -1439,5 +2605,109 @@ class _AIChatDialogState extends State<_AIChatDialog> {
         ),
       ),
     );
+  }
+}
+
+class _AudioPlayerWidget extends StatefulWidget {
+  final String audioUrl;
+  const _AudioPlayerWidget({required this.audioUrl});
+  @override
+  State<_AudioPlayerWidget> createState() => _AudioPlayerWidgetState();
+}
+
+class _AudioPlayerWidgetState extends State<_AudioPlayerWidget> {
+  late AudioPlayer _player;
+  bool _isPlaying = false;
+  Duration _duration = Duration.zero;
+  Duration _position = Duration.zero;
+  bool _isReady = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _player = AudioPlayer();
+    _initAudio();
+    _player.positionStream.listen((pos) {
+      setState(() {
+        _position = pos;
+      });
+    });
+    _player.playerStateStream.listen((state) {
+      setState(() {
+        _isPlaying = state.playing;
+      });
+    });
+  }
+
+  Future<void> _initAudio() async {
+    try {
+      final d = await _player.setUrl(widget.audioUrl);
+      setState(() {
+        _duration = d ?? Duration.zero;
+        _isReady = true;
+      });
+    } catch (e) {
+      setState(() {
+        _duration = Duration.zero;
+        _isReady = false;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _player.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final sliderMax = _duration.inMilliseconds > 0
+        ? _duration.inMilliseconds.toDouble()
+        : 1.0;
+    final sliderValue = _position.inMilliseconds.clamp(0, sliderMax).toDouble();
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          icon: Icon(
+            _isPlaying ? Icons.pause : Icons.play_arrow,
+            color: Colors.orangeAccent,
+          ),
+          onPressed: _isReady
+              ? () {
+                  if (_isPlaying) {
+                    _player.pause();
+                  } else {
+                    _player.play();
+                  }
+                }
+              : null,
+        ),
+        SizedBox(
+          width: 100,
+          child: Slider(
+            value: sliderValue,
+            min: 0,
+            max: sliderMax,
+            onChanged: (v) async {
+              await _player.seek(Duration(milliseconds: v.toInt()));
+            },
+            activeColor: Colors.orangeAccent,
+            inactiveColor: Colors.orangeAccent.withOpacity(0.3),
+          ),
+        ),
+        Text(
+          '${_formatDuration(_position)} / ${_formatDuration(_duration)}',
+          style: const TextStyle(fontSize: 12, color: Colors.white70),
+        ),
+      ],
+    );
+  }
+
+  String _formatDuration(Duration d) {
+    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$m:$s';
   }
 }

@@ -10,6 +10,14 @@ import torch
 import re
 from typing import List
 from pydantic import BaseModel
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload
+from google.auth.transport.requests import Request
+import os
+import io
+import json
 
 app = FastAPI()
 app.add_middleware(
@@ -128,3 +136,49 @@ def get_history(user1: str, user2: str) -> List[ChatMessage]:
     key = tuple(sorted([user1, user2]))
     messages = chat_store.get(key, [])
     return messages
+
+DRIVE_SCOPES = ['https://www.googleapis.com/auth/drive.file', 'https://www.googleapis.com/auth/drive']
+CLIENT_SECRETS_FILE = os.path.join(os.path.dirname(__file__), 'client_secret_812476518688-1ectn86112qc4fbpms1rgllnddacr9v3.apps.googleusercontent.com.json')
+TOKEN_FILE = os.path.join(os.path.dirname(__file__), 'token.json')
+
+def get_drive_credentials():
+    creds = None
+    if os.path.exists(TOKEN_FILE):
+        try:
+            creds_data = json.load(open(TOKEN_FILE, 'r'))
+            creds = Credentials.from_authorized_user_info(creds_data, scopes=DRIVE_SCOPES)
+        except Exception:
+            creds = None
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            if not os.path.exists(CLIENT_SECRETS_FILE):
+                raise FileNotFoundError(f"Client secrets not found at {CLIENT_SECRETS_FILE}. Place your JSON there.")
+            flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRETS_FILE, DRIVE_SCOPES)
+            creds = flow.run_local_server(port=0)
+            with open(TOKEN_FILE, 'w') as f:
+                f.write(creds.to_json())
+    return creds
+
+def upload_bytes_to_drive(file_bytes: bytes, filename: str, mime_type: str = 'image/png') -> str:
+    creds = get_drive_credentials()
+    drive_service = build('drive', 'v3', credentials=creds)
+    media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type, resumable=True)
+    file_metadata = {'name': filename}
+    file = drive_service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+    file_id = file.get('id')
+    drive_service.permissions().create(fileId=file_id, body={'type': 'anyone', 'role': 'reader'}).execute()
+    share_url = f'https://drive.google.com/uc?export=view&id={file_id}'
+    return share_url
+
+@app.post('/upload_drive')
+async def upload_drive(file: UploadFile = File(...)):
+    try:
+        data = await file.read()
+        mime = file.content_type or 'application/octet-stream'
+        url = upload_bytes_to_drive(data, file.filename, mime)
+        return JSONResponse(status_code=200, content={'url': url})
+    except Exception as e:
+        print(f"Drive upload error: {e}")  # Print error for debugging
+        return JSONResponse(status_code=500, content={'detail': f'Drive upload error: {e}'})
