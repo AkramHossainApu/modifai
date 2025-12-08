@@ -28,7 +28,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-GEMINI_API_KEY = "AIzaSyCfWiKmGabI7xh6AdwSvVaQ2EEtu-o_NKo"
+GEMINI_API_KEY = "AIzaSyAwW8PWVzAInOhuLO4xoFzN-ffzWmsXZAA"
 genai.configure(api_key=GEMINI_API_KEY)
 
 INTERIOR_ASSISTANT_PROMPT = (
