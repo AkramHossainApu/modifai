@@ -5,7 +5,8 @@ import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 import 'services/api_service.dart';
 import 'package:photo_view/photo_view.dart';
-import 'massage/m_home_page.dart' as massage_page; // <-- Use prefix to avoid AnimatedCircle conflict
+import 'massage/m_home_page.dart'
+    as massage_page; // <-- Use prefix to avoid AnimatedCircle conflict
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
@@ -138,7 +139,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   Future<void> _handleSend() async {
     final text = _chatController.text.trim();
     if (text.isNotEmpty) {
-      // If an image is picked, send both image and prompt to AI for modification
+      // If an image is picked, send both image and prompt to Gemini for modification
       if (_pickedImage != null) {
         final imageToSend = _pickedImage!;
         setState(() {
@@ -147,29 +148,34 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             "text": text,
             "image": imageToSend.path,
           });
-          _pickedImage =
-              null; // Remove the image preview immediately after sending
-          _chatController
-              .clear(); // Clear the text box immediately after sending
+          _pickedImage = null;
+          _chatController.clear();
           _isLoading = true;
         });
-        // Show AI typing indicator (animated dots)
         setState(() {
           _chatHistory.add({"sender": "ai", "text": "[typing]"});
         });
         try {
-          final decorated = await ApiService.getDecoratedImage(
+          final decorated = await ApiService.generateGeminiImage(
+            text,
             imageToSend,
-            prompt: text,
-            onProgress: (int p) {},
           );
           setState(() {
-            // Remove typing indicator
             final idx = _chatHistory.lastIndexWhere(
               (msg) => msg['text'] == "[typing]",
             );
             if (idx != -1) _chatHistory.removeAt(idx);
-            _chatHistory.add({"sender": "ai", "image": decorated.path});
+            if (decorated == null) {
+              _chatHistory.add({
+                "sender": "ai",
+                "text":
+                    "AI failed to generate an image. Please try again later.",
+              });
+            } else if (decorated is File) {
+              _chatHistory.add({"sender": "ai", "image": decorated.path});
+            } else {
+              _chatHistory.add({"sender": "ai", "text": decorated.toString()});
+            }
           });
         } catch (e) {
           setState(() {
@@ -206,29 +212,41 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           'text': text,
           'sender': 'user',
         });
-        _chatController.clear(); // Clear the text box immediately after sending
+        _chatController.clear();
         _isLoading = true;
       });
       setState(() {
         _chatHistory.add({"sender": "ai", "text": "[typing]"});
       });
       try {
-        final reply = await ApiService.getChatbotReply(text);
+        final reply = await ApiService.geminiChat(
+          chatId: 'home_chat',
+          message: text,
+        );
         setState(() {
           final idx = _chatHistory.lastIndexWhere(
             (msg) => msg['text'] == "[typing]",
           );
           if (idx != -1) _chatHistory.removeAt(idx);
-          if (reply is File) {
+          if (reply == null) {
+            _chatHistory.add({
+              'text': 'AI failed to reply. Please try again later.',
+              'sender': 'ai',
+            });
+            _chatSessions[_currentSessionIndex].add({
+              'text': 'AI failed to reply. Please try again later.',
+              'sender': 'ai',
+            });
+          } else if (reply is File) {
             _chatHistory.add({'text': '[image:${reply.path}]', 'sender': 'ai'});
             _chatSessions[_currentSessionIndex].add({
               'text': '[image:${reply.path}]',
               'sender': 'ai',
             });
           } else {
-            _chatHistory.add({'text': reply, 'sender': 'ai'});
+            _chatHistory.add({'text': reply.toString(), 'sender': 'ai'});
             _chatSessions[_currentSessionIndex].add({
-              'text': reply,
+              'text': reply.toString(),
               'sender': 'ai',
             });
           }
@@ -484,7 +502,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                         onTap: () {
                           Navigator.of(context).push(
                             MaterialPageRoute(
-                              builder: (context) => const massage_page.AddUserPage(),
+                              builder: (context) =>
+                                  const massage_page.AddUserPage(),
                             ),
                           );
                         },
@@ -776,7 +795,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 if (_chatController.text.isEmpty &&
                     _pickedImage == null &&
                     !_isLoading &&
-                    _chatHistory.isEmpty) // <-- Only show suggestions if chat is empty
+                    _chatHistory
+                        .isEmpty) // <-- Only show suggestions if chat is empty
                   Padding(
                     padding: const EdgeInsets.only(bottom: 28),
                     child: SizedBox(
@@ -927,7 +947,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                         alignment: Alignment.topRight,
                                         children: [
                                           ClipRRect(
-                                            borderRadius: BorderRadius.circular(12),
+                                            borderRadius: BorderRadius.circular(
+                                              12,
+                                            ),
                                             child: Image.file(
                                               _pickedImage!,
                                               width: double.infinity,
@@ -949,7 +971,11 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                                   color: Colors.black54,
                                                   shape: BoxShape.circle,
                                                 ),
-                                                child: const Icon(Icons.close, color: Colors.white, size: 20),
+                                                child: const Icon(
+                                                  Icons.close,
+                                                  color: Colors.white,
+                                                  size: 20,
+                                                ),
                                               ),
                                             ),
                                           ),
@@ -960,7 +986,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                     TextField(
                                       controller: _chatController,
                                       focusNode: _chatFocusNode,
-                                      style: const TextStyle(color: Colors.white),
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                      ),
                                       decoration: InputDecoration(
                                         hintText: _currentPlaceholder,
                                         hintStyle: TextStyle(
@@ -968,16 +996,19 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                           fontWeight: FontWeight.w400,
                                         ),
                                         border: InputBorder.none,
-                                        contentPadding: const EdgeInsets.symmetric(
-                                          horizontal: 16,
-                                          vertical: 16,
-                                        ),
+                                        contentPadding:
+                                            const EdgeInsets.symmetric(
+                                              horizontal: 16,
+                                              vertical: 16,
+                                            ),
                                       ),
                                       minLines: _pickedImage != null ? 6 : 1,
                                       maxLines: 10,
                                       onSubmitted: (_) {
                                         _handleSend();
-                                        FocusScope.of(context).requestFocus(_chatFocusNode);
+                                        FocusScope.of(
+                                          context,
+                                        ).requestFocus(_chatFocusNode);
                                       },
                                     ),
                                   ],
@@ -989,7 +1020,10 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                   color: Colors.blueAccent,
                                   size: 24,
                                 ),
-                                onPressed: _isLoading || (_chatController.text.trim().isEmpty && _pickedImage == null)
+                                onPressed:
+                                    _isLoading ||
+                                        (_chatController.text.trim().isEmpty &&
+                                            _pickedImage == null)
                                     ? null
                                     : _handleSend,
                               ),

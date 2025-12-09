@@ -11,3 +11,4 @@ huggingface_hub
 tiktoken
 accelerate
 python-multipart
+google-auth-oauthlib

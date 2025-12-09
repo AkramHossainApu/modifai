@@ -6,55 +6,70 @@ import 'package:path_provider/path_provider.dart';
 class ApiService {
   static const String baseUrl = 'http://10.0.2.2:8000';
 
-  /// Returns either a String (text reply) or  a File (image)
-  static Future<dynamic> getChatbotReply(String message) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/chat'),
-      body: {'message': message},
+  /// Single-turn Gemini image generation
+  static Future<dynamic> generateGeminiImage(
+    String prompt,
+    File imageFile,
+  ) async {
+    var request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$baseUrl/generate_gemini_image'),
     );
+    request.fields['prompt'] = prompt;
+    request.files.add(
+      await http.MultipartFile.fromPath('file', imageFile.path),
+    );
+    final response = await request.send();
     final contentType = response.headers['content-type'] ?? '';
     if (contentType.contains('application/json')) {
-      return json.decode(response.body)['reply'];
+      final respStr = await response.stream.bytesToString();
+      return json.decode(respStr)['text'];
     } else if (contentType.contains('image/png')) {
-      // Save image to temp dir
+      final bytes = await response.stream.toBytes();
       final tempDir = await getTemporaryDirectory();
       final file = File(
-        '${tempDir.path}/ai_reply_${DateTime.now().millisecondsSinceEpoch}.png',
+        '${tempDir.path}/gemini_reply_${DateTime.now().millisecondsSinceEpoch}.png',
       );
-      await file.writeAsBytes(response.bodyBytes);
+      await file.writeAsBytes(bytes);
       return file;
     } else {
       throw Exception('Unknown response type: $contentType');
     }
   }
 
-  static Future<File> getDecoratedImage(
-    File imageFile, {
-    String prompt =
-        "a beautiful, modern, cozy, well-lit interior design for this room",
-    void Function(int progress)? onProgress,
+  /// Multi-turn Gemini chat (text and image)
+  static Future<dynamic> geminiChat({
+    required String chatId,
+    required String message,
+    File? imageFile,
   }) async {
-    var request = http.MultipartRequest('POST', Uri.parse('$baseUrl/decorate'));
-    request.files.add(
-      await http.MultipartFile.fromPath('file', imageFile.path),
+    var request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$baseUrl/gemini_chat'),
     );
-    request.fields['prompt'] = prompt;
-
+    request.fields['chat_id'] = chatId;
+    request.fields['message'] = message;
+    if (imageFile != null) {
+      request.files.add(
+        await http.MultipartFile.fromPath('file', imageFile.path),
+      );
+    }
     final response = await request.send();
-
-    // Simulate progress (since http doesn't provide progress natively)
-    onProgress?.call(30);
-
-    if (response.statusCode == 200) {
+    final contentType = response.headers['content-type'] ?? '';
+    if (contentType.contains('application/json')) {
+      final respStr = await response.stream.bytesToString();
+      final decoded = json.decode(respStr);
+      return decoded['results'] ?? decoded;
+    } else if (contentType.contains('image/png')) {
       final bytes = await response.stream.toBytes();
+      final tempDir = await getTemporaryDirectory();
       final file = File(
-        '${imageFile.parent.path}/decorated_${imageFile.uri.pathSegments.last}',
+        '${tempDir.path}/gemini_chat_${DateTime.now().millisecondsSinceEpoch}.png',
       );
       await file.writeAsBytes(bytes);
-      onProgress?.call(100); // Call onProgress with 100% when done
       return file;
     } else {
-      throw Exception('Failed to get decorated image');
+      throw Exception('Unknown response type: $contentType');
     }
   }
 }

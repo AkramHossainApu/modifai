@@ -411,11 +411,16 @@ class _UserChatPageState extends State<UserChatPage> {
               final chatText = last5
                   .map((m) => '${m['sender']}: ${m['text'] ?? ''}')
                   .join('\n');
-              aiReply = await ApiService.getChatbotReply(
-                'Summarize the following chat between users:\n$chatText',
+              aiReply = await ApiService.geminiChat(
+                chatId: 'user2user',
+                message:
+                    'Summarize the following chat between users:\n$chatText',
               );
             } else {
-              aiReply = await ApiService.getChatbotReply(aiPrompt);
+              aiReply = await ApiService.geminiChat(
+                chatId: 'user2user',
+                message: aiPrompt,
+              );
             }
             // Remove the typing indicator
             setState(() {
@@ -2407,9 +2412,15 @@ class _AIChatDialogState extends State<_AIChatDialog> {
       _loading = true;
     });
     try {
-      final reply = await ApiService.getChatbotReply(prompt);
+      final reply = await ApiService.geminiChat(
+        chatId: 'ai_dialog',
+        message: prompt,
+      );
       setState(() {
-        _aiMessages.add({'sender': 'ai', 'text': reply});
+        _aiMessages.add({
+          'sender': 'ai',
+          'text': reply is String ? reply : reply.toString(),
+        });
         _loading = false;
       });
     } catch (e) {
@@ -2576,8 +2587,9 @@ class _AIChatDialogState extends State<_AIChatDialog> {
                               _loading = true;
                             });
                             try {
-                              final reply = await ApiService.getChatbotReply(
-                                'Summarize this chat: $chatText',
+                              final reply = await ApiService.geminiChat(
+                                chatId: 'ai_dialog',
+                                message: 'Summarize this chat: $chatText',
                               );
                               setState(() {
                                 _aiMessages.add({

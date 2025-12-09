@@ -1,11 +1,13 @@
 from fastapi import FastAPI, HTTPException, Form, UploadFile, File, Body
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from PIL import Image
+import io
 import google.generativeai as genai
 import asyncio
 from io import BytesIO
 import requests
-from diffusers import StableDiffusionPipeline
+from transformers import AutoTokenizer
 import torch
 import re
 from typing import List
@@ -28,28 +30,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-GEMINI_API_KEY = "AIzaSyAwW8PWVzAInOhuLO4xoFzN-ffzWmsXZAA"
+GEMINI_API_KEY = "AIzaSyDSj2COlfNWGsHUGmrxNsJ64Ui32PNAka8"
 genai.configure(api_key=GEMINI_API_KEY)
 
 INTERIOR_ASSISTANT_PROMPT = (
     "You are an expert interior design assistant. "
     "Answer user questions about room decoration, furniture, color schemes, and home improvement in a helpful, concise, and friendly way."
 )
-
-# Load Stable Diffusion pipeline at startup (text-to-image)
-pipe = StableDiffusionPipeline.from_pretrained(
-    "stabilityai/stable-diffusion-2-1-base",
-    torch_dtype=torch.float32
-)
-pipe.to("cpu")
-
-# Load Stable Diffusion img2img pipeline at startup (image-to-image)
-from diffusers import StableDiffusionImg2ImgPipeline
-img2img_pipe = StableDiffusionImg2ImgPipeline.from_pretrained(
-    "stabilityai/stable-diffusion-2-1-base",
-    torch_dtype=torch.float32
-)
-img2img_pipe.to("cpu")
 
 # In-memory chat storage (for demo; use a database in production)
 chat_store = {}
@@ -80,50 +67,58 @@ def is_image_request(message: str) -> bool:
 @app.post("/chat")
 async def chat(message: str = Form(...)):
     try:
+        print(f"[DEBUG] Received chat message: {message}")
         if is_image_request(message):
-            # Use Stable Diffusion for image generation
-            result = pipe(message.strip(), num_inference_steps=30).images[0]
-            output_buffer = BytesIO()
-            result.save(output_buffer, format="PNG")
-            output_buffer.seek(0)
-            return StreamingResponse(output_buffer, media_type="image/png")
-        else:
-            # Use Gemini for normal chat
+            print("[DEBUG] Detected image request, calling Gemini API...")
             user_prompt = f"{INTERIOR_ASSISTANT_PROMPT}\nUser: {message}\nAssistant:"
             client = genai.GenerativeModel("gemini-2.5-flash")
             loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(None, client.generate_content, user_prompt)
+            print(f"[DEBUG] Gemini response: {response}")
+            if hasattr(response, "image"):
+                img_bytes = response.image
+                print("[DEBUG] Gemini returned image bytes.")
+                return StreamingResponse(BytesIO(img_bytes), media_type="image/png")
+            if hasattr(response, "images") and response.images:
+                img_bytes = response.images[0]
+                print("[DEBUG] Gemini returned images list.")
+                return StreamingResponse(BytesIO(img_bytes), media_type="image/png")
+            print("[DEBUG] Gemini did not return image, returning text.")
+            return {"reply": response.text.strip()}
+        else:
+            print("[DEBUG] Detected text chat, calling Gemini API...")
+            user_prompt = f"{INTERIOR_ASSISTANT_PROMPT}\nUser: {message}\nAssistant:"
+            client = genai.GenerativeModel("gemini-2.5-flash")
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(None, client.generate_content, user_prompt)
+            print(f"[DEBUG] Gemini response: {response}")
             return {"reply": response.text.strip()}
     except Exception as e:
+        print(f"[ERROR] Chat/image error: {e}")
         return JSONResponse(status_code=500, content={"detail": f"Chat/image error: {e}"})
 
-@app.post("/decorate")
-async def decorate(
-    prompt: str = Form(...),
-    file: UploadFile = File(None)
-):
+@app.post("/generate_gemini_image")
+async def generate_gemini_image(prompt: str = Form(...), file: UploadFile = File(...)):
     try:
-        if not prompt or not prompt.strip():
-            raise HTTPException(status_code=400, detail="Prompt must not be empty.")
-        if file is not None:
-            # Image-to-image: modify the uploaded image according to the prompt
-            from PIL import Image
-            init_image = Image.open(file.file).convert("RGB")
-            # Resize to 512x512 for Stable Diffusion (or match model requirements)
-            init_image = init_image.resize((512, 512))
-            # Use preloaded img2img pipeline
-            result = img2img_pipe(prompt=prompt.strip(), image=init_image, strength=0.75, num_inference_steps=30).images[0]
-        else:
-            # Text-to-image: generate from prompt only
-            result = pipe(prompt.strip(), num_inference_steps=30).images[0]
-        output_buffer = BytesIO()
-        result.save(output_buffer, format="PNG")
-        output_buffer.seek(0)
-        return StreamingResponse(output_buffer, media_type="image/png")
-    except HTTPException:
-        raise
+        image_data = await file.read()
+        image = Image.open(io.BytesIO(image_data))
+        model = genai.GenerativeModel("gemini-2.5-flash-image")
+        response = model.generate_content([prompt, image])
+        for part in response.parts:
+            if part.text is not None:
+                return JSONResponse(status_code=200, content={"text": part.text})
+            elif part.inline_data is not None:
+                gen_image = part.as_image()
+                buf = io.BytesIO()
+                gen_image.save(buf, format="PNG")
+                buf.seek(0)
+                return StreamingResponse(buf, media_type="image/png")
+        return JSONResponse(status_code=500, content={"detail": "No valid response from Gemini API."})
     except Exception as e:
-        return JSONResponse(status_code=500, content={"detail": f"Diffusion image generation error: {e}"})
+        import traceback
+        print("Gemini image generation error:", e)
+        traceback.print_exc()
+        return JSONResponse(status_code=500, content={"detail": f"Gemini image generation error: {e}"})
 
 @app.post("/chat/send")
 def send_message(msg: ChatMessage):
@@ -182,3 +177,49 @@ async def upload_drive(file: UploadFile = File(...)):
     except Exception as e:
         print(f"Drive upload error: {e}")  # Print error for debugging
         return JSONResponse(status_code=500, content={'detail': f'Drive upload error: {e}'})
+
+# Store chat objects in memory for demo purposes
+chats = {}
+
+@app.post("/gemini_chat")
+async def gemini_chat(
+    chat_id: str = Form(...),
+    message: str = Form(...),
+    file: UploadFile = File(None)
+):
+    try:
+        # Create or get chat
+        if chat_id not in chats:
+            chats[chat_id] = genai.Client().chats.create(
+                model="gemini-3-pro-image-preview",
+                config={
+                    "response_modalities": ["TEXT", "IMAGE"],
+                    "tools": [{"google_search": {}}]
+                }
+            )
+        chat = chats[chat_id]
+        contents = [message]
+        if file:
+            image_data = await file.read()
+            image = Image.open(io.BytesIO(image_data))
+            contents.append(image)
+        response = chat.send_message(contents)
+        results = []
+        for part in response.parts:
+            if part.text is not None:
+                results.append({"type": "text", "content": part.text})
+            elif part.as_image():
+                gen_image = part.as_image()
+                buf = io.BytesIO()
+                gen_image.save(buf, format="PNG")
+                buf.seek(0)
+                results.append({"type": "image", "content": buf.getvalue()})
+        if not results:
+            return JSONResponse(status_code=500, content={"detail": "No valid response from Gemini API."})
+        # For images, return as StreamingResponse; for text, return as JSON
+        for r in results:
+            if r["type"] == "image":
+                return StreamingResponse(io.BytesIO(r["content"]), media_type="image/png")
+        return JSONResponse(status_code=200, content={"results": results})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"detail": f"Gemini chat error: {e}"})
