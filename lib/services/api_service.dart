@@ -6,70 +6,50 @@ import 'package:path_provider/path_provider.dart';
 class ApiService {
   static const String baseUrl = 'http://10.0.2.2:8000';
 
-  /// Single-turn Gemini image generation
-  static Future<dynamic> generateGeminiImage(
-    String prompt,
-    File imageFile,
-  ) async {
-    var request = http.MultipartRequest(
-      'POST',
-      Uri.parse('$baseUrl/generate_gemini_image'),
+  /// OpenAI image generation
+  static Future<File> generateOpenAIImage(String prompt) async {
+    var response = await http.post(
+      Uri.parse('$baseUrl/generate_openai_image'),
+      body: {'prompt': prompt},
     );
-    request.fields['prompt'] = prompt;
-    request.files.add(
-      await http.MultipartFile.fromPath('file', imageFile.path),
-    );
-    final response = await request.send();
-    final contentType = response.headers['content-type'] ?? '';
-    if (contentType.contains('application/json')) {
-      final respStr = await response.stream.bytesToString();
-      return json.decode(respStr)['text'];
-    } else if (contentType.contains('image/png')) {
-      final bytes = await response.stream.toBytes();
+    if (response.statusCode == 200 &&
+        response.headers['content-type']?.contains('image/png') == true) {
       final tempDir = await getTemporaryDirectory();
       final file = File(
-        '${tempDir.path}/gemini_reply_${DateTime.now().millisecondsSinceEpoch}.png',
+        '${tempDir.path}/openai_reply_${DateTime.now().millisecondsSinceEpoch}.png',
       );
-      await file.writeAsBytes(bytes);
+      await file.writeAsBytes(response.bodyBytes);
       return file;
     } else {
-      throw Exception('Unknown response type: $contentType');
+      throw Exception('OpenAI image error: ${response.body}');
     }
   }
 
-  /// Multi-turn Gemini chat (text and image)
-  static Future<dynamic> geminiChat({
-    required String chatId,
-    required String message,
-    File? imageFile,
-  }) async {
-    var request = http.MultipartRequest(
-      'POST',
-      Uri.parse('$baseUrl/gemini_chat'),
+  /// OpenAI chat (text)
+  static Future<String> openaiChat(String message) async {
+    var response = await http.post(
+      Uri.parse('$baseUrl/openai_chat'),
+      body: {'message': message},
     );
-    request.fields['chat_id'] = chatId;
-    request.fields['message'] = message;
-    if (imageFile != null) {
-      request.files.add(
-        await http.MultipartFile.fromPath('file', imageFile.path),
-      );
-    }
-    final response = await request.send();
-    final contentType = response.headers['content-type'] ?? '';
-    if (contentType.contains('application/json')) {
-      final respStr = await response.stream.bytesToString();
-      final decoded = json.decode(respStr);
-      return decoded['results'] ?? decoded;
-    } else if (contentType.contains('image/png')) {
-      final bytes = await response.stream.toBytes();
-      final tempDir = await getTemporaryDirectory();
-      final file = File(
-        '${tempDir.path}/gemini_chat_${DateTime.now().millisecondsSinceEpoch}.png',
-      );
-      await file.writeAsBytes(bytes);
-      return file;
+    if (response.statusCode == 200) {
+      final decoded = json.decode(response.body);
+      return decoded['reply'] ?? '';
     } else {
-      throw Exception('Unknown response type: $contentType');
+      throw Exception('OpenAI chat error: ${response.body}');
+    }
+  }
+
+  /// Gemini chat (text)
+  static Future<dynamic> geminiChat({required String chatId, required String message}) async {
+    var response = await http.post(
+      Uri.parse('$baseUrl/gemini_chat'),
+      body: {'chat_id': chatId, 'message': message},
+    );
+    if (response.statusCode == 200) {
+      final decoded = json.decode(response.body);
+      return decoded['reply'] ?? '';
+    } else {
+      throw Exception('Gemini chat error: ${response.body}');
     }
   }
 }

@@ -156,26 +156,13 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           _chatHistory.add({"sender": "ai", "text": "[typing]"});
         });
         try {
-          final decorated = await ApiService.generateGeminiImage(
-            text,
-            imageToSend,
-          );
+          final decorated = await ApiService.generateOpenAIImage(text);
           setState(() {
             final idx = _chatHistory.lastIndexWhere(
               (msg) => msg['text'] == "[typing]",
             );
             if (idx != -1) _chatHistory.removeAt(idx);
-            if (decorated == null) {
-              _chatHistory.add({
-                "sender": "ai",
-                "text":
-                    "AI failed to generate an image. Please try again later.",
-              });
-            } else if (decorated is File) {
-              _chatHistory.add({"sender": "ai", "image": decorated.path});
-            } else {
-              _chatHistory.add({"sender": "ai", "text": decorated.toString()});
-            }
+            _chatHistory.add({"sender": "ai", "image": decorated.path});
           });
         } catch (e) {
           setState(() {

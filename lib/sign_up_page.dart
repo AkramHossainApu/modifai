@@ -66,6 +66,7 @@ class _SignUpPageState extends State<SignUpPage> {
       } else if (e.code == 'weak-password') {
         errorMsg = 'Password is too weak.';
       }
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(errorMsg)));
     } catch (e) {
       setState(() => _isLoading = false);
@@ -79,6 +80,7 @@ class _SignUpPageState extends State<SignUpPage> {
             'createdAt': FieldValue.serverTimestamp(),
           });
         }
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Sign up successful! Please login.')));
         Navigator.pushReplacement(
           context,
@@ -86,6 +88,7 @@ class _SignUpPageState extends State<SignUpPage> {
         );
         return;
       }
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
     }
   }

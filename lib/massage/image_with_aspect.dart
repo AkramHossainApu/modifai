@@ -1,12 +1,11 @@
 import 'package:flutter/material.dart';
 import 'dart:io';
-import 'dart:ui';
 import 'zoomable_image_dialog.dart';
 
 class ImageWithAspect extends StatelessWidget {
   final String imagePath;
   final Widget? textWidget;
-  const ImageWithAspect({required this.imagePath, this.textWidget});
+  const ImageWithAspect({super.key, required this.imagePath, this.textWidget});
 
   @override
   Widget build(BuildContext context) {

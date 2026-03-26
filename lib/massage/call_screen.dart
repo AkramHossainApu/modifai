@@ -32,7 +32,7 @@ class _CallScreenState extends State<CallScreen> {
   RTCPeerConnection? _peerConnection;
   MediaStream? _localStream;
   late WebRTCSignalService _signalService;
-  bool _inCalling = true;
+  final bool _inCalling = true;
   bool _micEnabled = true;
   bool _camEnabled = true;
   bool _remoteConnected = false;
@@ -142,7 +142,7 @@ class _CallScreenState extends State<CallScreen> {
       _signalService.iceCandidatesStream(widget.peerId).listen((snapshot) {
         for (var doc in snapshot.docChanges) {
           final data = doc.doc.data();
-          debugPrint('Received ICE candidate from peer: \\${data}');
+          debugPrint('Received ICE candidate from peer: \\$data');
           if (data != null) {
             _peerConnection!
                 .addCandidate(
@@ -153,7 +153,7 @@ class _CallScreenState extends State<CallScreen> {
                   ),
                 )
                 .catchError((e) {
-                  debugPrint('Error adding ICE candidate: \\${e}');
+                  debugPrint('Error adding ICE candidate: \\$e');
                 });
           }
         }
@@ -316,26 +316,26 @@ class _CallScreenState extends State<CallScreen> {
                 FloatingActionButton(
                   backgroundColor: _micEnabled ? Colors.blue : Colors.grey,
                   heroTag: 'mic',
-                  child: Icon(_micEnabled ? Icons.mic : Icons.mic_off),
                   onPressed: _toggleMic,
+                  child: Icon(_micEnabled ? Icons.mic : Icons.mic_off),
                 ),
                 const SizedBox(width: 20),
                 if (widget.isVideo)
                   FloatingActionButton(
                     backgroundColor: _camEnabled ? Colors.blue : Colors.grey,
                     heroTag: 'cam',
+                    onPressed: _toggleCamera,
                     child: Icon(
                       _camEnabled ? Icons.videocam : Icons.videocam_off,
                     ),
-                    onPressed: _toggleCamera,
                   ),
                 if (widget.isVideo) const SizedBox(width: 20),
                 if (widget.isVideo)
                   FloatingActionButton(
                     backgroundColor: Colors.orange,
                     heroTag: 'switch',
-                    child: const Icon(Icons.cameraswitch),
                     onPressed: _switchCamera,
+                    child: const Icon(Icons.cameraswitch),
                   ),
                 const SizedBox(width: 20),
                 FloatingActionButton(

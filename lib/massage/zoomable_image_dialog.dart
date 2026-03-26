@@ -3,7 +3,7 @@ import 'dart:io';
 
 class ZoomableImageDialog extends StatefulWidget {
   final String imgPath;
-  const ZoomableImageDialog({required this.imgPath});
+  const ZoomableImageDialog({super.key, required this.imgPath});
 
   @override
   State<ZoomableImageDialog> createState() => _ZoomableImageDialogState();

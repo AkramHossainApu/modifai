@@ -3,8 +3,7 @@ import 'package:camera/camera.dart';
 
 class CameraScreen extends StatefulWidget {
   final void Function(String? imagePath) onImageCaptured;
-  const CameraScreen({Key? key, required this.onImageCaptured})
-    : super(key: key);
+  const CameraScreen({super.key, required this.onImageCaptured});
 
   @override
   State<CameraScreen> createState() => _CameraScreenState();
@@ -42,8 +41,9 @@ class _CameraScreenState extends State<CameraScreen> {
   Future<void> _takePicture() async {
     if (_controller == null ||
         !_controller!.value.isInitialized ||
-        _isTakingPicture)
+        _isTakingPicture) {
       return;
+    }
     setState(() => _isTakingPicture = true);
     try {
       final XFile file = await _controller!.takePicture();
@@ -84,12 +84,12 @@ class _CameraScreenState extends State<CameraScreen> {
                 padding: const EdgeInsets.only(bottom: 40),
                 child: FloatingActionButton(
                   backgroundColor: Colors.white,
+                  onPressed: _takePicture,
                   child: Icon(
                     Icons.camera_alt_rounded,
                     color: Colors.black,
                     size: 32,
                   ),
-                  onPressed: _takePicture,
                 ),
               ),
             ),

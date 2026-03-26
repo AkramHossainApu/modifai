@@ -74,7 +74,7 @@ class _UserChatPageState extends State<UserChatPage> {
     _callStream!.listen((doc) async {
       final data = doc.data();
       if (data == null) return;
-      debugPrint('Call doc: ' + data.toString());
+      debugPrint('Call doc: $data');
       final status = data['status'] as String?;
       final isVideo = data['isVideo'] as bool? ?? false;
       final now = DateTime.now().millisecondsSinceEpoch / 1000.0;
@@ -299,8 +299,9 @@ class _UserChatPageState extends State<UserChatPage> {
 
   void _sendMessage() async {
     final text = _msgController.text.trim();
-    if (text.isEmpty && _pickedImagePath == null && _pickedAudioPath == null)
+    if (text.isEmpty && _pickedImagePath == null && _pickedAudioPath == null) {
       return;
+    }
     final now = DateTime.now().millisecondsSinceEpoch / 1000.0;
     String senderUsername = _displayName(_senderName);
     String receiverUsername = _displayName(_receiverName);
@@ -411,16 +412,9 @@ class _UserChatPageState extends State<UserChatPage> {
               final chatText = last5
                   .map((m) => '${m['sender']}: ${m['text'] ?? ''}')
                   .join('\n');
-              aiReply = await ApiService.geminiChat(
-                chatId: 'user2user',
-                message:
-                    'Summarize the following chat between users:\n$chatText',
-              );
+              aiReply = await ApiService.openaiChat('Summarize the following chat between users:\n$chatText');
             } else {
-              aiReply = await ApiService.geminiChat(
-                chatId: 'user2user',
-                message: aiPrompt,
-              );
+              aiReply = await ApiService.openaiChat(aiPrompt);
             }
             // Remove the typing indicator
             setState(() {
@@ -603,7 +597,7 @@ class _UserChatPageState extends State<UserChatPage> {
     final callerId = widget.currentUserEmail.trim().toLowerCase();
     final receiverId = widget.userEmail.trim().toLowerCase();
     final callId = CallService.getCallDocId(callerId, receiverId);
-    debugPrint('Starting call with callId: ' + callId);
+    debugPrint('Starting call with callId: $callId');
     await CallService.startCall(
       callerId: callerId,
       callerName: _senderName ?? widget.currentUserEmail,
@@ -674,7 +668,7 @@ class _UserChatPageState extends State<UserChatPage> {
     final callerId = widget.currentUserEmail.trim().toLowerCase();
     final receiverId = widget.userEmail.trim().toLowerCase();
     final callId = CallService.getCallDocId(callerId, receiverId);
-    debugPrint('Opening CallScreen with callId: ' + callId);
+    debugPrint('Opening CallScreen with callId: $callId');
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => CallScreen(
@@ -776,8 +770,7 @@ class _UserChatPageState extends State<UserChatPage> {
                             myEmail,
                           );
                           debugPrint(
-                            'Accepting call, opening CallScreen with callId: ' +
-                                callId,
+                            'Accepting call, opening CallScreen with callId: $callId',
                           );
                           return CallScreen(
                             isCaller: false,
@@ -2285,8 +2278,9 @@ class _UserChatPageState extends State<UserChatPage> {
                                             '@',
                                           );
                                           if (wasShowing !=
-                                              _showingAtSuggestion)
+                                              _showingAtSuggestion) {
                                             setState(() {});
+                                          }
                                         },
                                         onTap: () {
                                           // Show suggestion if cursor is after @
@@ -2412,14 +2406,11 @@ class _AIChatDialogState extends State<_AIChatDialog> {
       _loading = true;
     });
     try {
-      final reply = await ApiService.geminiChat(
-        chatId: 'ai_dialog',
-        message: prompt,
-      );
+      final reply = await ApiService.openaiChat(prompt);
       setState(() {
         _aiMessages.add({
           'sender': 'ai',
-          'text': reply is String ? reply : reply.toString(),
+          'text': reply.toString(),
         });
         _loading = false;
       });
@@ -2587,10 +2578,7 @@ class _AIChatDialogState extends State<_AIChatDialog> {
                               _loading = true;
                             });
                             try {
-                              final reply = await ApiService.geminiChat(
-                                chatId: 'ai_dialog',
-                                message: 'Summarize this chat: $chatText',
-                              );
+                              final reply = await ApiService.openaiChat('Summarize this chat: $chatText');
                               setState(() {
                                 _aiMessages.add({
                                   'sender': 'ai',

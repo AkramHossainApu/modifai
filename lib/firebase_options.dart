@@ -3,6 +3,7 @@
 import 'package:firebase_core/firebase_core.dart' show FirebaseOptions;
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, kIsWeb, TargetPlatform;
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 /// Default [FirebaseOptions] for use with your Firebase apps.
 ///
@@ -17,17 +18,17 @@ import 'package:flutter/foundation.dart'
 class DefaultFirebaseOptions {
   static FirebaseOptions get currentPlatform {
     if (kIsWeb) {
-      return web;
+      return DefaultFirebaseOptions.web;
     }
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
-        return android;
+        return DefaultFirebaseOptions.android;
       case TargetPlatform.iOS:
-        return ios;
+        return DefaultFirebaseOptions.ios;
       case TargetPlatform.macOS:
-        return macos;
+        return DefaultFirebaseOptions.macos;
       case TargetPlatform.windows:
-        return windows;
+        return DefaultFirebaseOptions.windows;
       case TargetPlatform.linux:
         throw UnsupportedError(
           'DefaultFirebaseOptions have not been configured for linux - '
@@ -40,8 +41,8 @@ class DefaultFirebaseOptions {
     }
   }
 
-  static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'AIzaSyAqoM5q3zEkFRiaUXIVIutzq3Xg7VQS14I',
+  static FirebaseOptions get web => FirebaseOptions(
+    apiKey: dotenv.env['FIREBASE_API_KEY_WEB'] ?? '',
     appId: '1:543410368633:web:434b99a9f315df975b64a8',
     messagingSenderId: '543410368633',
     projectId: 'modifai0127',
@@ -49,16 +50,16 @@ class DefaultFirebaseOptions {
     storageBucket: 'modifai0127.firebasestorage.app',
   );
 
-  static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyDItXslqlHw1-pvPo30vcgfqNru5VlT6ss',
+  static FirebaseOptions get android => FirebaseOptions(
+    apiKey: dotenv.env['FIREBASE_API_KEY_ANDROID'] ?? '',
     appId: '1:543410368633:android:d6b0d4a9793c73db5b64a8',
     messagingSenderId: '543410368633',
     projectId: 'modifai0127',
     storageBucket: 'modifai0127.firebasestorage.app',
   );
 
-  static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: 'AIzaSyAqRpdcmcCDmgJZMwfmnj3voImReqClVF0',
+  static FirebaseOptions get ios => FirebaseOptions(
+    apiKey: dotenv.env['FIREBASE_API_KEY_IOS'] ?? '',
     appId: '1:543410368633:ios:5a47d0ccdfe588dd5b64a8',
     messagingSenderId: '543410368633',
     projectId: 'modifai0127',
@@ -67,8 +68,8 @@ class DefaultFirebaseOptions {
     iosBundleId: 'com.example.modifai',
   );
 
-  static const FirebaseOptions macos = FirebaseOptions(
-    apiKey: 'AIzaSyAqRpdcmcCDmgJZMwfmnj3voImReqClVF0',
+  static FirebaseOptions get macos => FirebaseOptions(
+    apiKey: dotenv.env['FIREBASE_API_KEY_IOS'] ?? '',
     appId: '1:543410368633:ios:5a47d0ccdfe588dd5b64a8',
     messagingSenderId: '543410368633',
     projectId: 'modifai0127',
@@ -77,8 +78,8 @@ class DefaultFirebaseOptions {
     iosBundleId: 'com.example.modifai',
   );
 
-  static const FirebaseOptions windows = FirebaseOptions(
-    apiKey: 'AIzaSyAqoM5q3zEkFRiaUXIVIutzq3Xg7VQS14I',
+  static FirebaseOptions get windows => FirebaseOptions(
+    apiKey: dotenv.env['FIREBASE_API_KEY_WINDOWS'] ?? '',
     appId: '1:543410368633:web:ad27387cf1da2fda5b64a8',
     messagingSenderId: '543410368633',
     projectId: 'modifai0127',

@@ -11,10 +11,15 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'massage/call_screen.dart';
 import 'services/call_service.dart';
 import 'dart:async';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'firebase_options.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp();
+  await dotenv.load(fileName: ".env");
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
   runApp(const MainApp());
 }
 

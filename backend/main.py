@@ -20,6 +20,10 @@ from google.auth.transport.requests import Request
 import os
 import io
 import json
+import openai
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = FastAPI()
 app.add_middleware(
@@ -30,8 +34,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-GEMINI_API_KEY = "AIzaSyDSj2COlfNWGsHUGmrxNsJ64Ui32PNAka8"
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 genai.configure(api_key=GEMINI_API_KEY)
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+openai.api_key = OPENAI_API_KEY
 
 INTERIOR_ASSISTANT_PROMPT = (
     "You are an expert interior design assistant. "
@@ -96,29 +103,6 @@ async def chat(message: str = Form(...)):
     except Exception as e:
         print(f"[ERROR] Chat/image error: {e}")
         return JSONResponse(status_code=500, content={"detail": f"Chat/image error: {e}"})
-
-@app.post("/generate_gemini_image")
-async def generate_gemini_image(prompt: str = Form(...), file: UploadFile = File(...)):
-    try:
-        image_data = await file.read()
-        image = Image.open(io.BytesIO(image_data))
-        model = genai.GenerativeModel("gemini-2.5-flash-image")
-        response = model.generate_content([prompt, image])
-        for part in response.parts:
-            if part.text is not None:
-                return JSONResponse(status_code=200, content={"text": part.text})
-            elif part.inline_data is not None:
-                gen_image = part.as_image()
-                buf = io.BytesIO()
-                gen_image.save(buf, format="PNG")
-                buf.seek(0)
-                return StreamingResponse(buf, media_type="image/png")
-        return JSONResponse(status_code=500, content={"detail": "No valid response from Gemini API."})
-    except Exception as e:
-        import traceback
-        print("Gemini image generation error:", e)
-        traceback.print_exc()
-        return JSONResponse(status_code=500, content={"detail": f"Gemini image generation error: {e}"})
 
 @app.post("/chat/send")
 def send_message(msg: ChatMessage):
@@ -223,3 +207,38 @@ async def gemini_chat(
         return JSONResponse(status_code=200, content={"results": results})
     except Exception as e:
         return JSONResponse(status_code=500, content={"detail": f"Gemini chat error: {e}"})
+
+@app.post("/generate_openai_image")
+async def generate_openai_image(prompt: str = Form(...)):
+    try:
+        response = openai.Image.create(
+            prompt=prompt,
+            n=1,
+            size="1024x1024"
+        )
+        image_url = response['data'][0]['url']
+        image_response = requests.get(image_url)
+        if image_response.status_code == 200:
+            return StreamingResponse(io.BytesIO(image_response.content), media_type="image/png")
+        else:
+            return JSONResponse(status_code=500, content={"detail": "Failed to fetch image from OpenAI."})
+    except Exception as e:
+        import traceback
+        print("OpenAI image generation error:", e)
+        traceback.print_exc()
+        return JSONResponse(status_code=500, content={"detail": f"OpenAI image generation error: {e}"})
+
+@app.post("/openai_chat")
+async def openai_chat(message: str = Form(...)):
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": message}]
+        )
+        reply = response['choices'][0]['message']['content']
+        return {"reply": reply}
+    except Exception as e:
+        import traceback
+        print("OpenAI chat error:", e)
+        traceback.print_exc()
+        return JSONResponse(status_code=500, content={"detail": f"OpenAI chat error: {e}"})

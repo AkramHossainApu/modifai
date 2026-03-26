@@ -18,9 +18,9 @@ class _AddUserPageState extends State<AddUserPage> {
   List<String> _users = [];
   String? _currentUserEmail;
   List<Map<String, dynamic>> _firestoreUsers = [];
-  Map<String, double> _chatLastTimestamps = {};
-  Set<String> _unreadChats = {};
-  Map<String, StreamSubscription> _chatSubscriptions = {};
+  final Map<String, double> _chatLastTimestamps = {};
+  final Set<String> _unreadChats = {};
+  final Map<String, StreamSubscription> _chatSubscriptions = {};
   late final ValueNotifier<bool> _fabExpanded = ValueNotifier(false);
 
   @override
@@ -277,7 +277,7 @@ class _AddUserPageState extends State<AddUserPage> {
                   ),
                   const SizedBox(height: 18),
                   DropdownButtonFormField<String>(
-                    value: selectedUserEmail,
+                    initialValue: selectedUserEmail,
                     items: availableUsers.map((user) {
                       return DropdownMenuItem<String>(
                         value: user['email'],
